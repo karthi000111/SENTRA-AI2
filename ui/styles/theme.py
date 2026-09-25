@@ -19,5 +19,7 @@ def inject_theme(st: object) -> None:
       .session-id { font-family: monospace; color: #9ecfff; overflow-wrap: anywhere; }
       .evidence-text { color: #c9d5e5; line-height: 1.55; }
       div.stButton > button { border-radius: 8px; font-weight: 650; }
+      [data-testid="stMetricValue"] { overflow-wrap: break-word; white-space: normal; line-height: 1.2; font-size: 1.2rem; }
+      [data-testid="stMetricLabel"] { overflow-wrap: break-word; white-space: normal; }
     </style>
     """, unsafe_allow_html=True)

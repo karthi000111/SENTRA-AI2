@@ -1,0 +1,21 @@
+{
+  "session_id": "b530200a-ad52-4f65-96f2-84230bb29072",
+  "chunks": [
+    {
+      "document": "methods.pdf",
+      "page": 1,
+      "chunk_id": "e1e13893-dea0-4f53-8fbc-a0311f2d77dc_methods_p1_c01",
+      "text": "The alpha methodology is evaluated carefully.",
+      "session_id": "b530200a-ad52-4f65-96f2-84230bb29072",
+      "document_id": "e1e13893-dea0-4f53-8fbc-a0311f2d77dc"
+    },
+    {
+      "document": "data.pdf",
+      "page": 1,
+      "chunk_id": "d794c4e9-65ef-40fa-957c-418f2abb8d25_data_p1_c01",
+      "text": "The beta dataset contains monitoring records.",
+      "session_id": "b530200a-ad52-4f65-96f2-84230bb29072",
+      "document_id": "d794c4e9-65ef-40fa-957c-418f2abb8d25"
+    }
+  ]
+}

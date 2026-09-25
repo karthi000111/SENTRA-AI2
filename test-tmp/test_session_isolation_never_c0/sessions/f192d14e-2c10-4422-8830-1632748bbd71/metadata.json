@@ -1,0 +1,13 @@
+{
+  "session_id": "f192d14e-2c10-4422-8830-1632748bbd71",
+  "chunks": [
+    {
+      "document": "beta.pdf",
+      "page": 1,
+      "chunk_id": "a80b2f91-7e71-4767-8658-49c3a67a7fe2_beta_p1_c01",
+      "text": "Beta monitoring only.",
+      "session_id": "f192d14e-2c10-4422-8830-1632748bbd71",
+      "document_id": "a80b2f91-7e71-4767-8658-49c3a67a7fe2"
+    }
+  ]
+}

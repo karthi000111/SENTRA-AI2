@@ -4,10 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.agents import ResearchAgent, ResearchResult
-from app.agents.models import SpecificationResult, GuardrailResult, CodeGenerationInput
-from app.agents.specification_agent import SpecificationAgent
+from app.guardrails.models import GuardrailResult
+from app.guardrails.domain_guardrail import DomainGuardrail
 from app.guardrails.evidence_guardrail import EvidenceGuardrail
-from app.orchestration.workflow import run_research_to_spec_workflow
+from app.services.implementation_context import ImplementationContext
 from app.rag import SessionIngestionResult, SessionRAGManager
 
 
@@ -25,8 +25,8 @@ class ResearchWorkspace:
     def __init__(self, manager: SessionRAGManager | None = None) -> None:
         self._manager = manager or SessionRAGManager()
         self._agent = ResearchAgent(self._manager)
-        self._spec_agent = SpecificationAgent()
-        self._guardrail = EvidenceGuardrail(max_attempts=3)
+        self._domain_guardrail = DomainGuardrail(self._agent)
+        self._evidence_guardrail = EvidenceGuardrail(max_attempts=3)
 
     def create_session(self) -> str:
         return self._manager.create_session()
@@ -58,15 +58,14 @@ class ResearchWorkspace:
     def generate_ml_specification(
         self,
         session_id: str,
-        task_description: str,
-        proposed_overrides: dict[str, str] | None = None
-    ) -> tuple[CodeGenerationInput | None, SpecificationResult, GuardrailResult]:
+        task: str = None
+    ) -> tuple[ImplementationContext | None, GuardrailResult]:
         """Runs the bounded research-to-specification workflow."""
+        from app.orchestration.workflow import run_research_to_spec_workflow
         return run_research_to_spec_workflow(
             session_id=session_id,
-            task_description=task_description,
+            task=task,
             research_agent=self._agent,
-            spec_agent=self._spec_agent,
-            guardrail=self._guardrail,
-            proposed_overrides=proposed_overrides
+            domain_guardrail=self._domain_guardrail,
+            evidence_guardrail=self._evidence_guardrail
         )

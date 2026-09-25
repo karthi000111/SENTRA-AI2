@@ -1,0 +1,21 @@
+{
+  "session_id": "2dced685-ba87-4b27-9c11-000eae869970",
+  "chunks": [
+    {
+      "document": "study.pdf",
+      "page": 1,
+      "chunk_id": "a51aeed7-84e2-40f7-b5ab-ab2238054be6_study_p1_c01",
+      "text": "Introductory material.",
+      "session_id": "2dced685-ba87-4b27-9c11-000eae869970",
+      "document_id": "a51aeed7-84e2-40f7-b5ab-ab2238054be6"
+    },
+    {
+      "document": "study.pdf",
+      "page": 2,
+      "chunk_id": "a51aeed7-84e2-40f7-b5ab-ab2238054be6_study_p2_c01",
+      "text": "The alpha methodology uses a curated dataset for monitoring.",
+      "session_id": "2dced685-ba87-4b27-9c11-000eae869970",
+      "document_id": "a51aeed7-84e2-40f7-b5ab-ab2238054be6"
+    }
+  ]
+}

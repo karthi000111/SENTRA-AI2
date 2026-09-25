@@ -1,0 +1,13 @@
+{
+  "session_id": "14929c28-1a70-43d2-b570-a133e59a3af1",
+  "chunks": [
+    {
+      "document": "paper_a.pdf",
+      "page": 1,
+      "chunk_id": "70206eff-7c38-4ee0-acd1-bd32ee07705a_paper_a_p1_c01",
+      "text": "Alpha retrieval method.",
+      "session_id": "14929c28-1a70-43d2-b570-a133e59a3af1",
+      "document_id": "70206eff-7c38-4ee0-acd1-bd32ee07705a"
+    }
+  ]
+}

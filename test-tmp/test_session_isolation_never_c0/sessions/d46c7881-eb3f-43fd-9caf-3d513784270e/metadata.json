@@ -1,0 +1,13 @@
+{
+  "session_id": "d46c7881-eb3f-43fd-9caf-3d513784270e",
+  "chunks": [
+    {
+      "document": "alpha.pdf",
+      "page": 1,
+      "chunk_id": "6352110e-8b6e-4cd3-9d0f-aafb63d8bf34_alpha_p1_c01",
+      "text": "Alpha retrieval only.",
+      "session_id": "d46c7881-eb3f-43fd-9caf-3d513784270e",
+      "document_id": "6352110e-8b6e-4cd3-9d0f-aafb63d8bf34"
+    }
+  ]
+}

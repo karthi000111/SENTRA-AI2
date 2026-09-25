@@ -1,0 +1,13 @@
+{
+  "session_id": "2427d26c-75fd-4c01-b60c-575ea2e94190",
+  "chunks": [
+    {
+      "document": "alpha.pdf",
+      "page": 1,
+      "chunk_id": "84545dfb-edee-4d91-841b-aa746d54db6b_alpha_p1_c01",
+      "text": "Alpha methodology is documented.",
+      "session_id": "2427d26c-75fd-4c01-b60c-575ea2e94190",
+      "document_id": "84545dfb-edee-4d91-841b-aa746d54db6b"
+    }
+  ]
+}

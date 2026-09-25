@@ -1,0 +1,13 @@
+{
+  "session_id": "abec53f9-4903-4eca-988f-0cb33ce219e6",
+  "chunks": [
+    {
+      "document": "beta.pdf",
+      "page": 1,
+      "chunk_id": "513bd1e9-f153-469c-a355-7b4db6c268f7_beta_p1_c01",
+      "text": "Beta dataset belongs only to B.",
+      "session_id": "abec53f9-4903-4eca-988f-0cb33ce219e6",
+      "document_id": "513bd1e9-f153-469c-a355-7b4db6c268f7"
+    }
+  ]
+}

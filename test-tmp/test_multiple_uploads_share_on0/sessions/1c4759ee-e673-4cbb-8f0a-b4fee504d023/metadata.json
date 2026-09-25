@@ -1,0 +1,21 @@
+{
+  "session_id": "1c4759ee-e673-4cbb-8f0a-b4fee504d023",
+  "chunks": [
+    {
+      "document": "first.pdf",
+      "page": 1,
+      "chunk_id": "6971857d-33eb-4b0b-a6ef-520f27edf5cb_first_p1_c01",
+      "text": "Alpha retrieval evidence.",
+      "session_id": "1c4759ee-e673-4cbb-8f0a-b4fee504d023",
+      "document_id": "6971857d-33eb-4b0b-a6ef-520f27edf5cb"
+    },
+    {
+      "document": "second.pdf",
+      "page": 1,
+      "chunk_id": "9ef4bd25-d17d-4e33-ae98-fb0e0ae95612_second_p1_c01",
+      "text": "Beta monitoring evidence.",
+      "session_id": "1c4759ee-e673-4cbb-8f0a-b4fee504d023",
+      "document_id": "9ef4bd25-d17d-4e33-ae98-fb0e0ae95612"
+    }
+  ]
+}
