@@ -190,10 +190,17 @@ def main() -> None:
                         else:
                             st.warning(f"**{name.replace('_', ' ').title()}** - {req.state.value}")
                             
-                        if req.value:
+                        if req.evidence and req.evidence.source_quote:
+                            st.markdown(f"> Evidence found in {req.evidence.source_file}, page {req.evidence.page}: {req.evidence.source_quote}")
+                        elif req.value:
                             st.markdown(f"> {req.value}")
                         if req.reason and req.state.value != "SUPPORTED":
                             st.markdown(f"*Reason:* {req.reason}")
+                            
+                if context and context.generated_code:
+                    st.markdown("### Generated Code")
+                    st.code(context.generated_code, language="python")
+
                             
                 st.markdown("---")
 
