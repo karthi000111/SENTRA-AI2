@@ -38,12 +38,30 @@ class PDFProcessor:
         except (fitz.FileDataError, RuntimeError, ValueError) as exc:
             report.problems.append(ExtractionProblem(name, f"Could not open PDF: {exc}"))
             return
+        import re
         try:
             before = len(report.pages)
+            in_references = False
             for page_number, page in enumerate(document, start=1):
                 text = page.get_text("text").strip()
-                if text:
-                    report.pages.append(ExtractedPage(name, page_number, text))
+                if not text:
+                    continue
+                
+                # Check for headings that look like references
+                if not in_references:
+                    if re.search(r"(?im)^(?:\d+\.?\s*)?(References|Bibliography|Works Cited)\s*$", text):
+                        in_references = True
+                        
+                is_ref = in_references
+                if not is_ref:
+                    # Regex safeguard for citation-shaped text
+                    if re.search(r"(?i)(?:,\s*\d+\(\d+\):\d+-\d+,?\s*(?:19|20)\d{2}|[A-Z][a-z]+,\s*[A-Z]\.\s*\((?:19|20)\d{2}\)\.\s*[A-Z])", text):
+                        # check if a large chunk of the text looks like references
+                        matches = len(re.findall(r"(?i)(?:,\s*\d+\(\d+\):\d+-\d+,?\s*(?:19|20)\d{2}|[A-Z][a-z]+,\s*[A-Z]\.\s*\((?:19|20)\d{2}\)\.\s*[A-Z]|arxiv:\d{4}\.\d{4,5})", text))
+                        if matches >= 3:
+                            is_ref = True
+                
+                report.pages.append(ExtractedPage(name, page_number, text, is_reference_section=is_ref))
             if len(report.pages) == before:
                 report.problems.append(ExtractionProblem(name, "No extractable text was found; OCR is not enabled."))
         finally:

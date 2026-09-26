@@ -108,13 +108,29 @@ class SessionRAGManager:
         self._persist(session_id, retriever)
         return SessionIngestionResult(session_id, len(all_chunks), report.problems)
 
-    def retrieve(self, session_id: str, query: str, top_k: int | None = None) -> list[dict[str, object]]:
+    def retrieve(self, session_id: str, query: str, top_k: int | None = None, include_references: bool = False, bias_first_pages: bool = False) -> list[dict[str, object]]:
         """Search only the FAISS index and metadata associated with ``session_id``."""
         retriever = self._retrievers.get(session_id) or self._load_retriever(session_id)
-        results = retriever.retrieve(query, top_k or self.settings.default_top_k)
-        # A defensive invariant: never return data that is not tagged with this session.
-        return [result for result in results
-                if result["session_id"] == session_id and result["score"] >= self.settings.relevance_threshold]
+        # Fetch extra results to allow for filtering
+        results = retriever.retrieve(query, (top_k or self.settings.default_top_k) * 3)
+        
+        filtered = []
+        for result in results:
+            if result["session_id"] != session_id or result["score"] < self.settings.relevance_threshold:
+                continue
+            if not include_references and result.get("is_reference_section", False):
+                continue
+            
+            if bias_first_pages:
+                page_num = result.get("page", 1)
+                if page_num <= 3:
+                    result["score"] *= 1.2
+            filtered.append(result)
+            
+        if bias_first_pages:
+            filtered.sort(key=lambda x: x["score"], reverse=True)
+            
+        return filtered[:(top_k or self.settings.default_top_k)]
 
     def delete_session(self, session_id: str) -> None:
         """Delete one validated session's uploads, FAISS index, and metadata."""

@@ -166,39 +166,35 @@ def main() -> None:
             
             if gr:
                 st.markdown("---")
-                st.markdown("#### Guardrail Audit & Execution Summary")
+                st.markdown(f"#### Guardrail Execution Summary: {gr.terminal_state.value}")
                 
-                # Handle old session_state objects gracefully
-                blocking_reason = getattr(gr, "blocking_reason", None)
-                code_gen_allowed = getattr(gr, "code_generation_allowed", False)
-                fields = getattr(gr, "fields", [])
-                warnings = getattr(gr, "warnings", [])
+                if gr.reason:
+                    st.error(f"Reason: {gr.reason}")
                 
-                if blocking_reason:
-                    st.error(f"✗ Code generation blocked: {blocking_reason}")
-                else:
-                    audit_summary = getattr(gr, "audit_summary", "")
-                    if audit_summary:
-                        st.markdown(f"**{audit_summary}**")
-
-                    if code_gen_allowed:
-                        st.success("✓ Code generation allowed.")
-                        
-                    st.markdown("### 📋 Verified Specifications")
-                    for field_ev in fields:
-                        formatted_name = field_ev.field.replace("_", " ").title()
-                        if field_ev.status == "SUPPORTED":
-                            st.success(f"**{formatted_name}**: {field_ev.value}")
-                        elif field_ev.status == "INFERRED":
-                            st.info(f"**{formatted_name} (INFERRED)**: {field_ev.value}\n\n*Reasoning*: {field_ev.reasoning}")
-                        elif field_ev.status == "MISSING":
-                            st.warning(f"**{formatted_name}**: {field_ev.value}")
+                if gr.detected_paradigm:
+                    st.info(f"**Detected Paradigm:** {format_paradigm(gr.detected_paradigm)}")
+                
+                if getattr(gr, "requirements", None):
+                    st.markdown("### Evidence Claims")
+                    for name, req in gr.requirements.items():
+                        # Hide non-applicable claims
+                        if req.state.value == "NOT_APPLICABLE_TO_PARADIGM":
+                            continue
+                        # Only show unresolved claims if they are not supported
+                        if req.state.value != "SUPPORTED" and gr.attempt_count < 3:
+                            continue
                             
-                    if warnings:
-                        st.markdown("### ⚠️ Warnings")
-                        for warning in warnings:
-                            st.warning(warning)
-                        
+                        # Formatting
+                        if req.state.value == "SUPPORTED":
+                            st.success(f"**{name.replace('_', ' ').title()}** - {req.state.value}")
+                        else:
+                            st.warning(f"**{name.replace('_', ' ').title()}** - {req.state.value}")
+                            
+                        if req.value:
+                            st.markdown(f"> {req.value}")
+                        if req.reason and req.state.value != "SUPPORTED":
+                            st.markdown(f"*Reason:* {req.reason}")
+                            
                 st.markdown("---")
 
 if __name__ == "__main__":

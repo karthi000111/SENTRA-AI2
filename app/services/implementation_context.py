@@ -11,3 +11,5 @@ class ImplementationContext:
     ml_domain: bool
     requirements: dict[str, Requirement] = field(default_factory=dict)
     code_gen_prompt: str | None = None
+    generated_code: str | None = None
+    sandbox_passed: bool = False

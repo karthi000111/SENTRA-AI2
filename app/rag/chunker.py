@@ -22,5 +22,6 @@ class PageChunker:
                 text = " ".join(words[start:start + self.chunk_size])
                 if text:
                     chunks.append(Chunk(page.document, page.page, f"{stem}_p{page.page}_c{number:02d}", text,
-                                        document_id=page.document_id))
+                                        document_id=page.document_id,
+                                        is_reference_section=page.is_reference_section))
         return chunks

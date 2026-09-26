@@ -35,5 +35,5 @@ class Retriever:
             raise ValueError("query must be a non-empty string.")
         matches = self._vector_store.search(self._embedder.encode([query]), top_k)
         return [RetrievalResult(chunk.document, chunk.page, chunk.chunk_id, chunk.text, distance,
-                                chunk.session_id, chunk.document_id).as_dict()
+                                chunk.session_id, chunk.document_id, chunk.is_reference_section).as_dict()
                 for chunk, distance in matches]

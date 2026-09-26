@@ -11,6 +11,7 @@ class ExtractedPage:
     page: int
     text: str
     document_id: str = ""
+    is_reference_section: bool = False
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class Chunk:
     text: str
     session_id: str = ""
     document_id: str = ""
+    is_reference_section: bool = False
 
 
 @dataclass(frozen=True)
@@ -33,13 +35,15 @@ class RetrievalResult:
     distance: float
     session_id: str = ""
     document_id: str = ""
+    is_reference_section: bool = False
 
     def as_dict(self) -> dict[str, object]:
         score = 1.0 / (1.0 + self.distance)
         return {"document": self.document, "filename": self.document, "source": self.document, "page": self.page,
                 "chunk_id": self.chunk_id, "text": self.text, "distance": self.distance,
                 "score": score,
-                "session_id": self.session_id, "document_id": self.document_id}
+                "session_id": self.session_id, "document_id": self.document_id,
+                "is_reference_section": self.is_reference_section}
 
 
 @dataclass(frozen=True)

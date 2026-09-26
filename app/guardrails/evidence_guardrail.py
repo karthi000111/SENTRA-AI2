@@ -1,12 +1,14 @@
-"""Evidence Guardrail to ensure sufficient implementation details."""
+"""Evidence Guardrail to ensure sufficient implementation details using method-type-aware schema."""
 from __future__ import annotations
 
 import re
+import numpy as np
 from app.agents.research_agent import ResearchAgent
 from app.agents.models import EvidenceLink
 from app.guardrails.models import (
     Requirement, RequirementClassification, GuardrailResult, 
-    EvidenceState, GuardrailTerminalState, ContextInfo, AIParadigm
+    EvidenceState, GuardrailTerminalState, ContextInfo, AIParadigm,
+    PaperRelevance, ImplementationSupport
 )
 
 class EvidenceGuardrail:
@@ -14,102 +16,87 @@ class EvidenceGuardrail:
     
     def __init__(self, max_attempts: int = 3):
         self.max_attempts = max_attempts
+        self.ml_references = [
+            "Deep learning neural networks with transformer architectures, convolutional layers, and self-attention mechanisms.",
+            "Classical machine learning including random forests, support vector machines, decision trees, and k-means clustering.",
+            "Symbolic and probabilistic artificial intelligence, bayesian networks, belief maintenance, constraint satisfaction, and logic systems.",
+            "Reinforcement learning, agentic systems, Q-learning, and markov decision processes.",
+            "Algorithmic optimization, statistical learning theory, and computational complexity procedures."
+        ]
+        self.non_ml_references = [
+            "Theoretical physics, quantum mechanics, string theory, and mathematical physics equations.",
+            "Astronomy, astrophysics, molecular clouds, stellar formation, and sub-mm telescope observations.",
+            "Biological sciences, genomics, genetics, protein folding, and molecular biology.",
+            "Organic chemistry, synthesis pathways, chemical reactions, and materials science.",
+            "Pure social sciences, qualitative studies, anthropological research, and sociological analysis."
+        ]
+        self.ml_embeddings = None
+        self.non_ml_embeddings = None
 
-    def _detect_paradigm(self, session_id: str, research_agent: ResearchAgent) -> AIParadigm:
-        query = "Extract keywords, abstract summary, and core methodology to determine the AI paradigm."
+    def _detect_method_type(self, session_id: str, research_agent: ResearchAgent) -> str:
+        query = "Does this paper propose a method that requires a training or optimization loop on a dataset (like deep learning or gradient descent), or is it a deterministic/symbolic algorithm (like clustering, constraint satisfaction, boolean propagation, tree search)? Answer 'TRAINABLE' or 'DETERMINISTIC'."
         result = research_agent.run(session_id=session_id, query=query, top_k=5)
-        text = " ".join(str(ev.get("text", "")).lower() for ev in (result.evidence or []))
+        text = str(result.answer).upper()
+        if "TRAINABLE" in text:
+            return "TRAINABLE"
+        elif "DETERMINISTIC" in text:
+            return "DETERMINISTIC"
         
-        symbolic_terms = ["bayesian", "belief maintenance", "clause", "probability interval", "boolean constraint propagation", "truth maintenance"]
-        if any(term in text for term in symbolic_terms):
-            return AIParadigm.SYMBOLIC_PROBABILISTIC
-            
-        classical_terms = ["clustering", "decision tree", "svm", "support vector", "random forest"]
-        if any(term in text for term in classical_terms):
-            return AIParadigm.CLASSICAL_ML
-            
-        control_terms = ["iec 61131", "state machine", "automation logic", "plc"]
-        if any(term in text for term in control_terms):
-            return AIParadigm.CONTROL_INDUSTRIAL
-            
-        return AIParadigm.DEEP_LEARNING
+        # fallback based on evidence text
+        evidence_text = " ".join(str(ev.get("text", "")).lower() for ev in (result.evidence or []))
+        if re.search(r"\b(train|learning|gradient|loss|optimization|epoch|batch)\b", evidence_text):
+            return "TRAINABLE"
+        return "DETERMINISTIC"
 
-    def _get_critical_fields(self, paradigm: AIParadigm) -> list[str]:
-        if paradigm == AIParadigm.DEEP_LEARNING:
-            return ["architecture_layers", "loss_function", "model_dimensions"]
-        elif paradigm == AIParadigm.SYMBOLIC_PROBABILISTIC:
-            return ["proposition_representation", "probability_intervals", "constraint_rules", "propagation_engine"]
-        elif paradigm == AIParadigm.CLASSICAL_ML:
-            return ["algorithm_type", "feature_dimensions", "objective_or_distance_metric"]
-        return ["architecture", "dataset", "target", "loss_function"]
+    def _get_critical_fields(self, method_type: str) -> list[str]:
+        fields = [
+            "core_method_description",
+            "core_equations_or_formal_rules"
+        ]
+        if method_type == "TRAINABLE":
+            fields.extend(["key_parameters", "training_or_optimization_procedure", "dataset_or_example_input"])
+        return fields
 
-    def _get_optional_fields(self, paradigm: AIParadigm) -> list[str]:
-        if paradigm == AIParadigm.DEEP_LEARNING:
-            return ["optimizer", "learning_rate", "batch_size"]
-        # Symbolic, Classical, Control do not typically use these exact NN hyperparameters
-        # in the same way, but they could have others. We'll leave them empty for now.
-        return []
-        
     def _get_all_possible_fields(self) -> list[str]:
         return [
-            "architecture_layers", "loss_function", "model_dimensions",
-            "proposition_representation", "probability_intervals", "constraint_rules", "propagation_engine",
-            "algorithm_type", "feature_dimensions", "objective_or_distance_metric",
-            "architecture", "dataset", "target",
-            "optimizer", "learning_rate", "batch_size"
+            "core_method_description",
+            "core_equations_or_formal_rules",
+            "key_parameters",
+            "training_or_optimization_procedure",
+            "dataset_or_example_input"
         ]
 
     def _get_query_for_attempt(self, req_name: str, attempt: int) -> str:
-        clean_name = req_name.replace('_', ' ')
-        if attempt == 1:
-            return f"What {clean_name} is explicitly reported or specified in the paper?"
-        elif attempt == 2:
-            return f"Find specific implementation details or methodology about the {clean_name} used in the paper."
-        else:
-            return f"Search for exact hyperparameters, setup, or {clean_name} configuration in the text."
-
-    def _normalize_value(self, req_name: str, text: str) -> str | None:
-        text_lower = text.lower()
-        if req_name == "optimizer":
-            if "sgd" in text_lower or "stochastic gradient descent" in text_lower:
-                return "SGD"
-            if "adam" in text_lower:
-                return "Adam"
-            if "rmsprop" in text_lower:
-                return "RMSprop"
-            return None
-        return text
+        if req_name == "core_method_description":
+            return "method algorithm architecture network transformer block layer procedure logic"
+        elif req_name == "core_equations_or_formal_rules":
+            return "equation equations function loss rule rules probability metric formula formal constraint"
+        elif req_name == "key_parameters":
+            return "parameter parameters hyperparameter hyperparameters rate size dimension threshold beta"
+        elif req_name == "training_or_optimization_procedure":
+            return "train training optimization epoch batch gradient descent"
+        elif req_name == "dataset_or_example_input":
+            return "dataset datasets corpus data set test example input"
+        return req_name
 
     def _explicitly_supports(self, req_name: str, text: str) -> bool:
         """Requirement-level validation to ensure the chunk actually supports the field."""
         text = text.lower()
-        if req_name in ["architecture", "architecture_layers", "algorithm", "algorithm_type"]:
-            return bool(re.search(r"\b(architecture|layer|layers|convolutional|conv|residual|network|transformer|block|hidden|algorithm|method)\b", text))
-        elif req_name in ["dataset", "features", "target", "feature_dimensions"]:
-            return bool(re.search(r"\b(dataset|datasets|corpus|cifar|cifar-10|imagenet|mnist|coco|data|training set|test set|features|target|labels|dimension|dimensions)\b", text))
-        elif req_name == "loss_function":
-            if "f(x) + x" in text and not re.search(r"\b(cross.?entropy|mse|negative log likelihood|nll|loss)\b", text):
+        if req_name == "core_method_description":
+            return bool(re.search(r"\b(architecture|layer|layers|convolutional|residual|network|transformer|block|hidden|algorithm|method|procedure|steps)\b", text))
+        elif req_name == "core_equations_or_formal_rules":
+            if "f(x) + x" in text and not re.search(r"\b(equation|equations|loss|function|functions|constraint|constraints|probability|probabilities|rule|rules)\b", text):
                 return False
-            return bool(re.search(r"\b(cross.?entropy|mse|negative log likelihood|nll|loss|objective)\b", text))
-        elif req_name == "optimizer":
-            return bool(re.search(r"\b(adam|sgd|stochastic gradient descent|rmsprop|adagrad)\b", text))
-        elif req_name == "learning_rate":
-            return bool(re.search(r"\b(learning.?rate|lr)\b", text))
-        elif req_name == "batch_size":
-            return bool(re.search(r"\b(batch.?size|mini.?batch)\b", text))
-        elif req_name == "num_clusters":
-            return bool(re.search(r"\b(clusters|k\s*=)\b", text))
-        elif req_name in ["distance_metric", "objective_or_distance_metric"]:
-            return bool(re.search(r"\b(distance|euclidean|manhattan|cosine|objective|metric)\b", text))
-        elif req_name in ["proposition_representation", "probability_intervals", "constraint_rules", "propagation_engine", "model_dimensions"]:
-            # Broader match for symbolic topics since it varies wildly
-            return bool(re.search(r"\b(proposition|probability|interval|constraint|rule|propagation|engine|dimension|bayesian|logic)\b", text))
+            return bool(re.search(r"\b(equation|equations|loss|function|functions|constraint|constraints|probability|probabilities|rule|rules|objective|metric|metrics|formula|formulas)\b", text))
+        elif req_name == "key_parameters":
+            return bool(re.search(r"\b(parameter|parameters|hyperparameter|hyperparameters|rate|size|dimension|dimensions|clusters|k\s*=)\b", text))
+        elif req_name == "training_or_optimization_procedure":
+            return bool(re.search(r"\b(train|training|optimize|optimization|epoch|epochs|batch|batches|gradient|descent|adam|sgd|learning)\b", text))
+        elif req_name == "dataset_or_example_input":
+            return bool(re.search(r"\b(dataset|datasets|corpus|data|training set|test set|features|target|labels|example|input|inputs)\b", text))
         return False
 
     def _attempt_resolve(self, req_name: str, requirements: dict, session_id: str, task: str, research_agent: ResearchAgent, attempt: int):
-        from app.guardrails.models import Requirement, RequirementClassification, EvidenceState, ContextInfo
-        from app.agents.models import EvidenceLink
-        
         query = self._get_query_for_attempt(req_name, attempt)
         result = research_agent.run(session_id=session_id, query=query, top_k=5)
         
@@ -122,48 +109,50 @@ class EvidenceGuardrail:
             if supporting_evidences:
                 best_ev = supporting_evidences[0]
                 
-                if best_ev:
-                    ev_link = EvidenceLink(
-                        source=str(best_ev.get("source", best_ev.get("filename", ""))),
-                        page=int(best_ev.get("page", 0)),
-                        chunk_id=str(best_ev.get("chunk_id", "")),
-                        evidence_text=str(best_ev.get("text", ""))
-                    )
-                    
-                    val = self._normalize_value(req_name, str(best_ev.get("text", "")))
-                    if val is None:
-                        val = str(best_ev.get("text", ""))
-                        
-                    keywords = research_agent._keywords(query)
-                    excerpt = research_agent._best_sentence(str(best_ev["text"]), keywords)
-                    answer = f"{val} (Based on {best_ev['source']}, page {best_ev['page']}: {excerpt})"
-                    
-                    ctx = ContextInfo(
-                        document_id=ev_link.source,
-                        experiment=task
-                    )
-                    
+                ev_link = EvidenceLink(
+                    source=str(best_ev.get("source", best_ev.get("filename", ""))),
+                    page=int(best_ev.get("page", 0)),
+                    chunk_id=str(best_ev.get("chunk_id", "")),
+                    evidence_text=str(best_ev.get("text", ""))
+                )
+                
+                val = str(best_ev.get("text", ""))
+                keywords = research_agent._keywords(query)
+                excerpt = research_agent._best_sentence(val, keywords)
+                answer = f"Evidence found in {best_ev['source']}, page {best_ev['page']}: {excerpt}"
+                
+                ctx = ContextInfo(
+                    document_id=ev_link.source,
+                    experiment=task
+                )
+                
+                requirements[req_name] = Requirement(
+                    name=req_name,
+                    value=answer,
+                    classification=RequirementClassification.PAPER_SUPPORTED,
+                    state=EvidenceState.SUPPORTED,
+                    evidence=ev_link,
+                    context=ctx
+                )
+            else:
+                if len(result.evidence) > 0:
                     requirements[req_name] = Requirement(
                         name=req_name,
-                        value=answer,
-                        classification=RequirementClassification.PAPER_SUPPORTED,
-                        state=EvidenceState.SUPPORTED,
-                        evidence=ev_link,
-                        context=ctx
+                        state=EvidenceState.CONTEXT_MISMATCH,
+                        reason="Evidence found but did not match target context."
                     )
                 else:
-                    if len(supporting_evidences) > 1:
-                        requirements[req_name] = Requirement(
-                            name=req_name,
-                            state=EvidenceState.CONTEXT_MISMATCH,
-                            reason="Evidence found but did not match target context."
-                        )
-                    else:
-                        requirements[req_name] = Requirement(
-                            name=req_name,
-                            state=EvidenceState.NOT_FOUND,
-                            reason="Explicit evidence not found."
-                        )
+                    requirements[req_name] = Requirement(
+                        name=req_name,
+                        state=EvidenceState.NOT_FOUND,
+                        reason="Explicit evidence not found."
+                    )
+        else:
+            requirements[req_name] = Requirement(
+                name=req_name,
+                state=EvidenceState.NOT_FOUND,
+                reason="Explicit evidence not found."
+            )
 
     def validate(
         self, 
@@ -171,51 +160,116 @@ class EvidenceGuardrail:
         task: str,
         research_agent: ResearchAgent
     ) -> GuardrailResult:
-        from app.guardrails.models import Requirement, RequirementClassification, EvidenceState, GuardrailTerminalState, PaperRelevance, ImplementationSupport
         
-        paradigm = self._detect_paradigm(session_id, research_agent)
+        # Pre-check Domain Relevance (Embedding-based)
+        chunks = research_agent._rag_manager._current_chunks(session_id)
+        if not chunks:
+            return GuardrailResult(
+                terminal_state=GuardrailTerminalState.DOMAIN_UNSUPPORTED,
+                attempt_count=1,
+                reason="Not an ML/AI paper. Reason: No substantive text chunks found.",
+                session_id=session_id,
+                code_generation_allowed=False,
+                task_description=task,
+                paper_relevance=PaperRelevance.UNSUPPORTED,
+                implementation_support=ImplementationSupport.IMPLEMENTATION_UNSUPPORTED
+            )
+
+        embedder = research_agent._rag_manager._embedder
+
+        if self.ml_embeddings is None:
+            self.ml_embeddings = embedder.encode(self.ml_references)
+            self.non_ml_embeddings = embedder.encode(self.non_ml_references)
+
+        first_chunk = chunks[0].text
+        chunk_embedding = embedder.encode([first_chunk])[0]
         
-        critical_fields = self._get_critical_fields(paradigm)
-        optional_fields = self._get_optional_fields(paradigm)
+        chunk_norm = np.linalg.norm(chunk_embedding)
+        if chunk_norm > 0:
+            chunk_embedding = chunk_embedding / chunk_norm
+            
+        ml_norms = np.linalg.norm(self.ml_embeddings, axis=1, keepdims=True)
+        ml_embeddings_norm = np.divide(self.ml_embeddings, ml_norms, out=np.zeros_like(self.ml_embeddings), where=ml_norms!=0)
+        
+        non_ml_norms = np.linalg.norm(self.non_ml_embeddings, axis=1, keepdims=True)
+        non_ml_embeddings_norm = np.divide(self.non_ml_embeddings, non_ml_norms, out=np.zeros_like(self.non_ml_embeddings), where=non_ml_norms!=0)
+
+        ml_sims = np.dot(ml_embeddings_norm, chunk_embedding)
+        non_ml_sims = np.dot(non_ml_embeddings_norm, chunk_embedding)
+        
+        avg_ml_sim = float(np.mean(ml_sims))
+        avg_non_ml_sim = float(np.mean(non_ml_sims))
+
+        if avg_non_ml_sim >= avg_ml_sim:
+            return GuardrailResult(
+                terminal_state=GuardrailTerminalState.DOMAIN_UNSUPPORTED,
+                attempt_count=1,
+                reason="Not an ML/AI paper.",
+                session_id=session_id,
+                code_generation_allowed=False,
+                task_description=task,
+                paper_relevance=PaperRelevance.UNSUPPORTED,
+                implementation_support=ImplementationSupport.IMPLEMENTATION_UNSUPPORTED
+            )
+
+        method_type = self._detect_method_type(session_id, research_agent)
+        
+        critical_fields = self._get_critical_fields(method_type)
         all_possible_fields = self._get_all_possible_fields()
         
         requirements = {}
         for req in all_possible_fields:
-            if req in optional_fields:
-                requirements[req] = Requirement(
-                    name=req, 
-                    state=EvidenceState.SUPPORTED,
-                    classification=RequirementClassification.IMPLEMENTATION_CHOICE,
-                    value="Assigned to default implementation choice.",
-                    reason="Optional engineering parameter mapped to default."
-                )
-            elif req not in critical_fields:
+            if req not in critical_fields:
                 requirements[req] = Requirement(
                     name=req, 
                     state=EvidenceState.NOT_APPLICABLE_TO_PARADIGM,
-                    reason=f"Not applicable to {paradigm.value}"
+                    reason=f"Not applicable to {method_type} paradigm"
                 )
             else:
                 requirements[req] = Requirement(name=req, state=EvidenceState.NOT_FOUND)
         
         # Pass 1: Automatic Spec Review
         for req_name in critical_fields:
-            if requirements[req_name].state != EvidenceState.SUPPORTED:
-                self._attempt_resolve(req_name, requirements, session_id, task, research_agent, attempt=1)
+            self._attempt_resolve(req_name, requirements, session_id, task, research_agent, attempt=1)
                 
-        all_critical_supported = all(requirements[req].state == EvidenceState.SUPPORTED for req in critical_fields)
-        if all_critical_supported:
-            return GuardrailResult(
-                terminal_state=GuardrailTerminalState.PASS,
-                attempt_count=1,
-                requirements=requirements,
-                session_id=session_id,
-                code_generation_allowed=True,
-                task_description=task,
-                paper_relevance=PaperRelevance.SUPPORTED,
-                implementation_support=ImplementationSupport.SUPPORTED,
-                detected_paradigm=paradigm
-            )
+        def is_substantive_algorithmic_context_present() -> bool:
+            return (requirements.get("core_method_description").state == EvidenceState.SUPPORTED or 
+                    requirements.get("core_equations_or_formal_rules").state == EvidenceState.SUPPORTED)
+
+        if method_type == "DETERMINISTIC":
+            if is_substantive_algorithmic_context_present():
+                for req in critical_fields:
+                    if requirements[req].state != EvidenceState.SUPPORTED:
+                        requirements[req] = Requirement(
+                            name=req,
+                            state=EvidenceState.NOT_APPLICABLE_TO_PARADIGM,
+                            reason="Not required due to presence of other substantive algorithmic context."
+                        )
+                return GuardrailResult(
+                    terminal_state=GuardrailTerminalState.PASS,
+                    attempt_count=1,
+                    requirements=requirements,
+                    session_id=session_id,
+                    code_generation_allowed=True,
+                    task_description=task,
+                    paper_relevance=PaperRelevance.SUPPORTED,
+                    implementation_support=ImplementationSupport.SUPPORTED,
+                    detected_paradigm=AIParadigm.CLASSICAL_ML
+                )
+        else:
+            all_critical_supported = all(requirements[req].state == EvidenceState.SUPPORTED for req in critical_fields)
+            if all_critical_supported:
+                return GuardrailResult(
+                    terminal_state=GuardrailTerminalState.PASS,
+                    attempt_count=1,
+                    requirements=requirements,
+                    session_id=session_id,
+                    code_generation_allowed=True,
+                    task_description=task,
+                    paper_relevance=PaperRelevance.SUPPORTED,
+                    implementation_support=ImplementationSupport.SUPPORTED,
+                    detected_paradigm=AIParadigm.DEEP_LEARNING
+                )
             
         attempt = 2
         while attempt <= self.max_attempts:
@@ -223,19 +277,40 @@ class EvidenceGuardrail:
             for req_name in missing_core_fields:
                 self._attempt_resolve(req_name, requirements, session_id, task, research_agent, attempt=attempt)
                 
-            all_critical_supported = all(requirements[req].state == EvidenceState.SUPPORTED for req in critical_fields)
-            if all_critical_supported:
-                return GuardrailResult(
-                    terminal_state=GuardrailTerminalState.PASS,
-                    attempt_count=attempt,
-                    requirements=requirements,
-                    session_id=session_id,
-                    code_generation_allowed=True,
-                    task_description=task,
-                    paper_relevance=PaperRelevance.SUPPORTED,
-                    implementation_support=ImplementationSupport.SUPPORTED,
-                    detected_paradigm=paradigm
-                )
+            if method_type == "DETERMINISTIC":
+                if is_substantive_algorithmic_context_present():
+                    for req in critical_fields:
+                        if requirements[req].state != EvidenceState.SUPPORTED:
+                            requirements[req] = Requirement(
+                                name=req,
+                                state=EvidenceState.NOT_APPLICABLE_TO_PARADIGM,
+                                reason="Not required due to presence of other substantive algorithmic context."
+                            )
+                    return GuardrailResult(
+                        terminal_state=GuardrailTerminalState.PASS,
+                        attempt_count=attempt,
+                        requirements=requirements,
+                        session_id=session_id,
+                        code_generation_allowed=True,
+                        task_description=task,
+                        paper_relevance=PaperRelevance.SUPPORTED,
+                        implementation_support=ImplementationSupport.SUPPORTED,
+                        detected_paradigm=AIParadigm.CLASSICAL_ML
+                    )
+            else:
+                all_critical_supported = all(requirements[req].state == EvidenceState.SUPPORTED for req in critical_fields)
+                if all_critical_supported:
+                    return GuardrailResult(
+                        terminal_state=GuardrailTerminalState.PASS,
+                        attempt_count=attempt,
+                        requirements=requirements,
+                        session_id=session_id,
+                        code_generation_allowed=True,
+                        task_description=task,
+                        paper_relevance=PaperRelevance.SUPPORTED,
+                        implementation_support=ImplementationSupport.SUPPORTED,
+                        detected_paradigm=AIParadigm.DEEP_LEARNING
+                    )
             attempt += 1
 
         return GuardrailResult(
@@ -248,5 +323,5 @@ class EvidenceGuardrail:
             task_description=task,
             paper_relevance=PaperRelevance.SUPPORTED,
             implementation_support=ImplementationSupport.APPLICABLE,
-            detected_paradigm=paradigm
+            detected_paradigm=AIParadigm.DEEP_LEARNING if method_type == "TRAINABLE" else AIParadigm.CLASSICAL_ML
         )
