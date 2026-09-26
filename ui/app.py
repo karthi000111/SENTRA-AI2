@@ -8,9 +8,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import streamlit as st
 
 from app.services import ResearchWorkspace, WorkspaceStatus
-from app.guardrails.models import GuardrailTerminalState, RequirementClassification
-from app.services.audit_reporter import generate_audit_report
-from app.services.scaffold_generator import generate_scaffold
 from ui.components.evidence_panel import render_result
 from ui.components.header import render_header
 from ui.components.sidebar import render_sidebar
@@ -169,148 +166,40 @@ def main() -> None:
             
             if gr:
                 st.markdown("---")
+                st.markdown("#### Guardrail Audit & Execution Summary")
                 
-                # Render Guardrail output as required by the prompt
-                st.markdown("#### Research Status")
-                if gr.paper_relevance == "SUPPORTED":
-                    st.success("✓ Paper available for research")
+                # Handle old session_state objects gracefully
+                blocking_reason = getattr(gr, "blocking_reason", None)
+                code_gen_allowed = getattr(gr, "code_generation_allowed", False)
+                fields = getattr(gr, "fields", [])
+                warnings = getattr(gr, "warnings", [])
+                
+                if blocking_reason:
+                    st.error(f"✗ Code generation blocked: {blocking_reason}")
                 else:
-                    st.error("✗ Not a valid research paper")
-                    
-                if gr.paper_relevance == "SUPPORTED":
-                    st.markdown("#### Implementation Compatibility")
-                    if gr.implementation_support != "IMPLEMENTATION_UNSUPPORTED":
-                        st.success("✓ Implementation request is applicable")
-                    else:
-                        st.error("✗ Requested implementation is not supported by this paper")
+                    audit_summary = getattr(gr, "audit_summary", "")
+                    if audit_summary:
+                        st.markdown(f"**{audit_summary}**")
+
+                    if code_gen_allowed:
+                        st.success("✓ Code generation allowed.")
                         
-                    st.markdown("#### Requested Task")
-                    st.info(gr.task_description)
-                    
-                    if gr.implementation_support == "IMPLEMENTATION_UNSUPPORTED":
-                        st.markdown("#### Evidence Finding")
-                        st.warning(gr.reason)
-                        
-                    if gr.terminal_state not in (GuardrailTerminalState.IMPLEMENTATION_UNSUPPORTED, GuardrailTerminalState.DOMAIN_UNSUPPORTED):
-                        st.markdown("#### Evidence Recovery")
-                        if gr.terminal_state == GuardrailTerminalState.PASS:
-                            st.success("✓ Sufficient")
-                        else:
-                            st.error("✗ Insufficient")
-                        st.info(f"Completed in {gr.attempt_count} attempts")
-                        
-                if gr.terminal_state != GuardrailTerminalState.PASS:
-                    st.markdown("#### Code Generation")
-                    st.error("BLOCKED")
-
-                st.markdown("---")
-                st.subheader("🛡️ Guardrail Audit & Execution Summary")
-
-                # 1. Paradigm Banner
-                # Keep the paradigm outside st.metric() so long labels cannot be clipped.
-                paradigm_label = format_paradigm(
-                    getattr(gr, "detected_paradigm", "DEEP_LEARNING")
-                )
-
-                st.info(f"**Detected AI Paradigm:** {paradigm_label}")
-
-                # 2. Metric Summary Bar
-                col1, col2, col3 = st.columns(3)
-
-                col1.metric(
-                    "Core Completeness",
-                    f"{getattr(gr, 'completeness_score', 1.0) * 100:.0f}%",
-                )
-
-                col2.metric(
-                    "Paper Requirements",
-                    f"{getattr(gr, 'paper_supported_count', 0)} Supported",
-                )
-
-                col3.metric(
-                    "System Defaults",
-                    f"{getattr(gr, 'implementation_choice_count', 0)} Choices",
-                )
-
-                # 3. Grounded Specifications
-                # Safely use the helper property when available.
-                active_specs = getattr(gr, "grounded_specs", {})
-
-                # Backward-compatible fallback for older GuardrailResult objects.
-                if not active_specs:
-                    verified_dict = getattr(gr, "verified_context", {})
-
-                    if isinstance(verified_dict, dict):
-                        active_specs = {
-                            key: value
-                            for key, value in verified_dict.items()
-                            if value not in [
-                                None,
-                                "",
-                                "None",
-                                "..........",
-                                "NOT_FOUND",
-                                "N/A",
-                            ]
-                            and not (
-                                isinstance(value, dict)
-                                and value.get("status") == "NOT_APPLICABLE"
-                            )
-                        }
-
-                if active_specs:
                     st.markdown("### 📋 Verified Specifications")
-
-                    for key, spec_data in active_specs.items():
-                        formatted_title = str(key).replace("_", " ").title()
-
-                        if isinstance(spec_data, dict):
-                            value = spec_data.get("value", str(spec_data))
-                            citation = spec_data.get("citation", "")
-
-                            st.markdown(
-                                f"• **{formatted_title}**: {value}"
-                            )
-
-                            if citation:
-                                st.caption(
-                                    f"📍 Source: Page {citation}"
-                                )
-
-                        else:
-                            st.markdown(
-                                f"• **{formatted_title}**: {spec_data}"
-                            )
-
-                # 4. Generated Code and Sandbox Status
-                if getattr(gr, "generated_code", None):
-                    st.markdown("### 🐍 Generated Python Implementation")
-                    st.code(
-                        gr.generated_code,
-                        language="python",
-                    )
-
-                    if getattr(gr, "sandbox_passed", False):
-                        st.success(
-                            "✓ Live Sandbox Execution Passed: "
-                            "Code syntax and execution verified."
-                        )
-                    else:
-                        st.info(
-                            "ℹ️ Implementation generated with "
-                            "paper-grounded provenance."
-                        )
-                if gr.terminal_state != GuardrailTerminalState.PASS:
-                    st.markdown("---")
-                    st.markdown("#### Safety Audit Report")
-                    audit_report = generate_audit_report(gr)
-                    st.code(audit_report, language="markdown")
-                    
-                    if gr.terminal_state == GuardrailTerminalState.UNRESOLVED:
-                        st.markdown("#### Evidence-Bounded Implementation Scaffold")
-                        st.info("The paper lacks necessary evidence. The following scaffold blocks dangerous assumptions.")
-                        scaffold = generate_scaffold(gr)
-                        st.code(scaffold, language="python")
+                    for field_ev in fields:
+                        formatted_name = field_ev.field.replace("_", " ").title()
+                        if field_ev.status == "SUPPORTED":
+                            st.success(f"**{formatted_name}**: {field_ev.value}")
+                        elif field_ev.status == "INFERRED":
+                            st.info(f"**{formatted_name} (INFERRED)**: {field_ev.value}\n\n*Reasoning*: {field_ev.reasoning}")
+                        elif field_ev.status == "MISSING":
+                            st.warning(f"**{formatted_name}**: {field_ev.value}")
+                            
+                    if warnings:
+                        st.markdown("### ⚠️ Warnings")
+                        for warning in warnings:
+                            st.warning(warning)
+                        
+                st.markdown("---")
 
 if __name__ == "__main__":
     main()
