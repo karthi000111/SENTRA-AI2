@@ -474,25 +474,28 @@ Produce the full Python code now:
         """Heuristic check for a response cut off mid-generation."""
         if not code.strip():
             return True
-        stripped = code.rstrip()
-        # Ends mid-statement: open paren/bracket/brace unbalanced
-        opens = sum(stripped.count(c) for c in "([{")
-        closes = sum(stripped.count(c) for c in ")]}")
-        if opens != closes:
-            return True
-        # Ends on a line that looks like it's mid-expression
-        last_line = stripped.splitlines()[-1].rstrip()
-        if last_line.endswith((",", "(", "=", "+", "-", "*", "/", "\\", ":")):
-            return True
-        # Entrypoint check only if explicitly required (e.g. main.py or single script)
-        if require_main and "__main__" not in code:
-            return True
+            
         try:
             compile(code, "<check>", "exec")
+            if require_main and "__main__" not in code:
+                return True
             return False
         except SyntaxError as e:
-            # EOF-related syntax errors are the clearest truncation signal
-            return "unexpected EOF" in str(e) or "was never closed" in str(e)
+            err_str = str(e).lower()
+            if "unexpected eof" in err_str or "was never closed" in err_str:
+                return True
+                
+            stripped = code.rstrip()
+            last_line = stripped.splitlines()[-1].rstrip()
+            if last_line.endswith((",", "(", "=", "+", "-", "*", "/", "\\", ":")):
+                return True
+                
+            opens = sum(stripped.count(c) for c in "([{")
+            closes = sum(stripped.count(c) for c in ")]}")
+            if opens != closes:
+                return True
+                
+            return False
 
     def _generate_with_continuation(self, prompt: str, max_continuations: int = 3, require_main: bool = False) -> str:
         """Call the LLM, and if the response looks truncated, ask it to
@@ -591,64 +594,18 @@ RULES:
 Produce the code for {entry['filename']} now:
 """
             # -------------------------------------------
-            # Generate file – use two‑pass approach for large files
+            # Generate file - single pass
             # -------------------------------------------
-            if len(entry['filename']) > 0 and entry['filename'].endswith('.py'):
-                # Heuristic: if we already have a lot of prior context, split large files
-                # Use a simple length check on the prompt; if > 2000 chars, do two passes
-                # First pass – signatures only
-                sig_prompt = f"""You are implementing ONE FILE of a multi‑file PyTorch project.
-
-VERIFIED SPECIFICATIONS:
-{specs_block if specs_block else "(none)"}
-
-FILES ALREADY WRITTEN (for reference — import from these, do not redefine their classes):
-{self._summarize_context(context_so_far) if context_so_far else "(none yet — this is the first file)"}
-
-YOUR TASK: write ONLY the **signatures** (class and function definitions) for `{entry['filename']}`. Do NOT include any implementation code – replace bodies with a single `pass` statement.
-"""
-                try:
-                    sig_code = self._generate_with_continuation(sig_prompt, require_main=is_main)
-                except Exception as exc:
-                    logger.exception("LLM call failed during signature generation for %s.", entry['filename'])
-                    return CodeGenResult(
-                        files=generated_files,
-                        generated_code=context_so_far,
-                        success=False,
-                        error_reason=f"Signature generation failed on {entry['filename']}: {exc}",
-                    )
-                # Second pass – fill bodies, using signatures as context
-                body_prompt = f"""You are implementing ONE FILE of a multi‑file PyTorch project.
-
-VERIFIED SPECIFICATIONS:
-{specs_block if specs_block else "(none)"}
-
-FILES ALREADY WRITTEN (for reference — import from these, do not redefine their classes):
-{self._summarize_context(context_so_far) if context_so_far else "(none yet — this is the first file)"}\n{sig_code}\n
-YOUR TASK: fill in the **bodies** for the signatures already present in `{entry['filename']}`. Replace each `pass` with the correct implementation according to the specifications.
-"""
-                try:
-                    code = self._generate_with_continuation(body_prompt, require_main=is_main)
-                except Exception as exc:
-                    logger.exception("LLM call failed during body generation for %s.", entry['filename'])
-                    return CodeGenResult(
-                        files=generated_files,
-                        generated_code=context_so_far,
-                        success=False,
-                        error_reason=f"Body generation failed on {entry['filename']}: {exc}",
-                    )
-            else:
-                # Normal single‑pass generation for smaller files
-                try:
-                    code = self._generate_with_continuation(file_prompt, require_main=is_main)
-                except Exception as exc:
-                    logger.exception("LLM call failed during code generation for %s.", entry['filename'])
-                    return CodeGenResult(
-                        files=generated_files,
-                        generated_code=context_so_far,
-                        success=False,
-                        error_reason=f"LLM call failed on {entry['filename']}: {exc}",
-                    )
+            try:
+                code = self._generate_with_continuation(file_prompt, require_main=is_main)
+            except Exception as exc:
+                logger.exception("LLM call failed during code generation for %s.", entry['filename'])
+                return CodeGenResult(
+                    files=generated_files,
+                    generated_code=context_so_far,
+                    success=False,
+                    error_reason=f"LLM call failed on {entry['filename']}: {exc}",
+                )
 
             spec_c, assumed, deferred = self.extract_annotations(code)
             generated_files.append(GeneratedFile(

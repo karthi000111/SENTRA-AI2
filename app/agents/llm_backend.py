@@ -9,7 +9,7 @@ Set OPENROUTER_API_KEY for the fastest, most reliable free option.
 Get a free key at: https://openrouter.ai/settings/keys
 """
 from __future__ import annotations
-
+import time
 import json
 import logging
 import os
@@ -51,25 +51,16 @@ _SYSTEM_PROMPT = (
 # Provider 1: OpenRouter (FREE, no credit card)
 # ---------------------------------------------------------------------------
 def call_openrouter(prompt: str) -> str | None:
-    """Call OpenRouter's free-tier API. OpenAI-compatible endpoint."""
+    """Try each configured OpenRouter model in turn until one answers."""
     api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if not api_key:
+        logger.warning("OpenRouter: no OPENROUTER_API_KEY in environment")
         return None
 
-    model = os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL)
+    models = [m.strip() for m in os.getenv(
+        "OPENROUTER_MODELS", os.getenv("OPENROUTER_MODEL", "openrouter/free")
+    ).split(",") if m.strip()]
     url = "https://openrouter.ai/api/v1/chat/completions"
-
-    payload = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        "max_tokens": _MAX_NEW_TOKENS,
-        "temperature": _TEMPERATURE,
-        "top_p": _TOP_P,
-    }).encode("utf-8")
-
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -77,33 +68,37 @@ def call_openrouter(prompt: str) -> str | None:
         "X-Title": "Hallucination Control Framework",
     }
 
-    try:
-        req = urllib.request.Request(url, data=payload, headers=headers)
-        logger.info("Calling OpenRouter model=%s prompt_len=%d", model, len(prompt))
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            data = json.loads(resp.read().decode())
-
-        # Check for error in response body
-        if "error" in data:
-            logger.warning("OpenRouter returned error: %s", data["error"])
-            return None
-
-        text = data["choices"][0]["message"]["content"]
-        if text:
-            logger.info("OpenRouter returned %d chars.", len(text))
-            return text
-    except urllib.error.HTTPError as e:
-        body = ""
-        try:
-            body = e.read().decode()[:500]
-        except Exception:
-            pass
-        logger.warning("OpenRouter HTTP %d: %s", e.code, body)
-    except Exception as exc:
-        logger.warning("OpenRouter call failed: %s", exc)
-
+    for sweep in range(2):                      # go through the whole list twice
+        for model in models:
+            payload = json.dumps({
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": _MAX_NEW_TOKENS,
+                "temperature": _TEMPERATURE,
+                "top_p": _TOP_P,
+            }).encode("utf-8")
+            try:
+                req = urllib.request.Request(url, data=payload, headers=headers)
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    data = json.loads(resp.read().decode())
+                if "error" in data:
+                    logger.warning("OpenRouter %s error: %s", model, data["error"])
+                    continue
+                text = data["choices"][0]["message"]["content"]
+                if text:
+                    logger.warning("OpenRouter model used: %s", model)
+                    return text
+            except urllib.error.HTTPError as e:
+                logger.warning("OpenRouter %s -> HTTP %d, trying next model", model, e.code)
+                if e.code in (401, 402):        # key/credit problems: no point continuing
+                    return None
+            except Exception as exc:
+                logger.warning("OpenRouter %s failed: %s", model, exc)
+        time.sleep(3)                            # short pause between sweeps
     return None
-
 
 # ---------------------------------------------------------------------------
 # Provider 2: HuggingFace Inference API
@@ -209,30 +204,22 @@ def call_ollama(prompt: str) -> str | None:
 # Unified entry point
 # ---------------------------------------------------------------------------
 def call_hf_inference(prompt: str) -> str:
-    """Try providers in order: OpenRouter → HuggingFace → Ollama.
+    """Try providers in order, logging which one answered and how long it took."""
+    providers = [("openrouter", call_openrouter), ("huggingface", call_hf)]
+    if os.getenv("ENABLE_OLLAMA", "0") == "1":
+        providers.append(("ollama", call_ollama))
 
-    Keeps the same function name so existing code doesn't need changes.
-    """
-    # 1. OpenRouter (free, fast, recommended)
-    result = call_openrouter(prompt)
-    if result:
-        return result
-
-    # 2. HuggingFace Inference API
-    result = call_hf(prompt)
-    if result:
-        return result
-
-    # 3. Local Ollama
-    result = call_ollama(prompt)
-    if result:
-        return result
+    for name, fn in providers:
+        start = time.time()
+        result = fn(prompt)
+        elapsed = time.time() - start
+        if result:
+            logger.warning("LLM provider=%s OK in %.1fs (%d chars)", name, elapsed, len(result))
+            return result
+        logger.warning("LLM provider=%s FAILED after %.1fs, trying next", name, elapsed)
 
     raise RuntimeError(
-        "All code generation backends failed.\n"
-        "Options to fix:\n"
-        "  1. (Recommended) Set OPENROUTER_API_KEY — free, no credit card needed.\n"
-        "     Get a key at: https://openrouter.ai/settings/keys\n"
-        "  2. Top up HuggingFace credits at https://huggingface.co/settings/billing\n"
-        "  3. Run Ollama locally: ollama serve && ollama pull qwen3:4b\n"
+        "All enabled code generation backends failed. Check the terminal for the "
+        "provider error lines above. Set OPENROUTER_API_KEY, or set ENABLE_OLLAMA=1 "
+        "to allow the local fallback."
     )

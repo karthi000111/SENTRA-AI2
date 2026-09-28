@@ -154,22 +154,22 @@ def main() -> None:
         
         with qa_tab:
             query = st.text_area("Ask Research Agent", placeholder="Ask something about your uploaded research papers...", height=105)
-        if st.button("Ask Research Agent", type="primary"):
-            if not query.strip():
-                st.warning("Please enter a research question.")
-            else:
-                try:
-                    with st.spinner("Research Agent is analyzing your evidence..."):
-                        result = service.ask(status.session_id, query)
-                    st.session_state.history = [{"query": query, "result": result}, *st.session_state.get("history", [])][:8]
-                except (KeyError, ValueError, RuntimeError) as exc:
-                    st.error(f"The Research Agent could not retrieve evidence: {exc}")
-        history = st.session_state.get("history", [])
-        if history:
-            render_result(st, history[0]["result"])
-            with st.expander("RECENT QUESTIONS"):
-                for item in history:
-                    st.caption(f"• {item['query']}")
+            if st.button("Ask Research Agent", type="primary"):
+                if not query.strip():
+                    st.warning("Please enter a research question.")
+                else:
+                    try:
+                        with st.spinner("Research Agent is analyzing your evidence..."):
+                            result = service.ask(status.session_id, query)
+                        st.session_state.history = [{"query": query, "result": result}, *st.session_state.get("history", [])][:8]
+                    except (KeyError, ValueError, RuntimeError) as exc:
+                        st.error(f"The Research Agent could not retrieve evidence: {exc}")
+            history = st.session_state.get("history", [])
+            if history:
+                render_result(st, history[0]["result"])
+                with st.expander("RECENT QUESTIONS"):
+                    for item in history:
+                        st.caption(f"• {item['query']}")
                     
         with spec_tab:
             st.markdown("### Guardrail Verification")
