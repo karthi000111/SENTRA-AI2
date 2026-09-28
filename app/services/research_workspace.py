@@ -88,3 +88,13 @@ class ResearchWorkspace:
             guardrail_result=guardrail_result,
         )
 
+    def test_implementation(
+        self,
+        code_or_files: Any,
+        specs: dict | None = None,
+    ) -> "TestSuiteResult":
+        """Runs the 10 dynamic ML domain test cases against generated code."""
+        from app.testing.ml_testing_agent import MLTestingAgent
+        agent = MLTestingAgent()
+        return agent.run_test_suite(code_or_files, specs=specs)
+

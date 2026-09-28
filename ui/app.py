@@ -65,6 +65,8 @@ def reset_ui_state() -> None:
     st.session_state.pop("confirm_delete", None)
     st.session_state.pop("last_context", None)
     st.session_state.pop("last_guardrail", None)
+    st.session_state.pop("last_gen_result", None)
+    st.session_state.pop("last_test_result", None)
 
 
 def active_status(service: ResearchWorkspace) -> WorkspaceStatus | None:
@@ -150,7 +152,7 @@ def main() -> None:
             st.markdown('<div class="card"><div class="label">YOUR RESEARCH SPACE IS EMPTY</div><h3>Upload one or more research papers to create your temporary knowledge base.</h3><p class="muted">Documents remain isolated within this research session.</p></div>', unsafe_allow_html=True)
             return
             
-        qa_tab, spec_tab, code_tab = st.tabs(["Q&A", "Implementation Guardrail", "🔬 Code Implementation"])
+        qa_tab, spec_tab, code_tab, test_tab = st.tabs(["Q&A", "Implementation Guardrail", "🔬 Code Implementation", "🧪 Dynamic Testing"])
         
         with qa_tab:
             query = st.text_area("Ask Research Agent", placeholder="Ask something about your uploaded research papers...", height=105)
@@ -360,6 +362,93 @@ def main() -> None:
                         if gen_result.generated_code:
                             with st.expander("Partial / failed output"):
                                 st.code(gen_result.generated_code, language="python")
+
+        # -----------------------------------------------------------------
+        # Dynamic Testing tab
+        # -----------------------------------------------------------------
+        with test_tab:
+            st.markdown("### 🧪 Dynamic ML Test Suite")
+            st.markdown(
+                "Run 10 dynamic ML test cases locally without external API calls. "
+                "Validates AST syntax, model instantiation, tensor shapes, gradient flow, "
+                "NaN/Inf stability, variable batching, weight updates, and eval determinism."
+            )
+
+            gen_result = st.session_state.get("last_gen_result")
+            context = st.session_state.get("last_context")
+
+            default_sample_code = (
+                "import torch\n"
+                "import torch.nn as nn\n\n"
+                "class PaperAttentionModel(nn.Module):\n"
+                "    def __init__(self, d_model=64, num_heads=4):\n"
+                "        super().__init__()\n"
+                "        self.attention = nn.MultiheadAttention(embed_dim=d_model, num_heads=num_heads, batch_first=True)\n"
+                "        self.norm = nn.LayerNorm(d_model)\n"
+                "        self.fc = nn.Linear(d_model, d_model)\n\n"
+                "    def forward(self, x):\n"
+                "        attn_out, _ = self.attention(x, x, x)\n"
+                "        x = self.norm(x + attn_out)\n"
+                "        return self.fc(x)\n"
+            )
+
+            if gen_result and gen_result.files:
+                st.info(f"📋 Loaded {len(gen_result.files)} generated paper code file(s) for testing.")
+                code_to_test = gen_result.files
+            elif context and context.generated_code:
+                st.info("📋 Loaded generated paper implementation code for testing.")
+                code_to_test = context.generated_code
+            else:
+                st.info("💡 No paper code generated yet in this session. Pre-loaded sample PyTorch Attention Model below for instant testing!")
+                code_to_test = st.text_area("Python / PyTorch Code to Test", value=default_sample_code, height=180)
+
+            specs_to_test = context.requirements if context else {}
+
+            if st.button("🧪 Run ML Test Suite", type="primary", use_container_width=True):
+                with st.spinner("Executing 10 dynamic ML domain test cases locally..."):
+                    try:
+                        test_suite_res = service.test_implementation(code_to_test, specs=specs_to_test)
+                        st.session_state.last_test_result = test_suite_res
+                    except Exception as exc:
+                        st.error(f"Test suite execution failed: {exc}")
+
+            test_res = st.session_state.get("last_test_result")
+            if test_res:
+                st.markdown("---")
+                
+                # Status Banner
+                if test_res.all_passed:
+                    st.success(f"🎉 **ALL {test_res.total_tests} TEST CASES PASSED** ({test_res.execution_time_ms:.2f} ms total)")
+                else:
+                    st.error(f"⚠️ **TEST SUITE FAILED**: {test_res.passed_count}/{test_res.total_tests} Passed, {test_res.failed_count} Failed ({test_res.execution_time_ms:.2f} ms total)")
+
+                # Metrics summary cards
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Total Tests", test_res.total_tests)
+                m2.metric("Passed", test_res.passed_count)
+                m3.metric("Failed", test_res.failed_count)
+                m4.metric("Execution Time", f"{test_res.execution_time_ms:.1f} ms")
+
+                st.markdown("### Test Case Results & Outputs")
+                for tc in test_res.results:
+                    status_label = "✅ PASSED" if tc.passed else "❌ FAILED"
+                    header_text = f"{tc.test_id} · {tc.name} — {status_label}"
+                    
+                    with st.expander(header_text, expanded=not tc.passed):
+                        st.markdown(f"**Description:** {tc.description}")
+                        st.markdown(f"**Expected Output:** `{tc.expected_output}`")
+                        
+                        if tc.passed:
+                            st.markdown("**Actual Output / Log:**")
+                            st.code(tc.output_log or "Execution completed cleanly.", language="text")
+                        else:
+                            st.markdown("**Actual Output / Failure Details:**")
+                            st.error(tc.error_message or "Test case failed.")
+                            if tc.output_log:
+                                st.caption("Partial Execution Log:")
+                                st.code(tc.output_log, language="text")
+                        
+                        st.caption(f"Execution time: {tc.execution_time_ms:.2f} ms")
 
 if __name__ == "__main__":
     main()
