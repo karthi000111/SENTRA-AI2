@@ -6,7 +6,16 @@ detail to be implemented as an ML model or algorithmic system.
 from __future__ import annotations
 
 import logging
-from pydantic import BaseModel
+try:
+    from pydantic import BaseModel
+except ImportError:
+    # Minimal fallback BaseModel that behaves like pydantic's BaseModel for our use case
+    class BaseModel:  # noqa: D401
+        def __init__(self, **data):
+            for k, v in data.items():
+                setattr(self, k, v)
+        def dict(self):
+            return self.__dict__
 
 logger = logging.getLogger(__name__)
 

@@ -181,9 +181,12 @@ class EvidenceGuardrail:
             self.ml_embeddings = embedder.encode(self.ml_references)
             self.non_ml_embeddings = embedder.encode(self.non_ml_references)
 
-        first_chunk = chunks[0].text
-        chunk_embedding = embedder.encode([first_chunk])[0]
-        
+        # FIX: sample multiple early chunks instead of only chunks[0], which is
+        # often just a title/author block with little topical signal.
+        sample_texts = [c.text for c in chunks[:5]]
+        sample_embeddings = embedder.encode(sample_texts)
+        chunk_embedding = np.mean(sample_embeddings, axis=0)
+
         chunk_norm = np.linalg.norm(chunk_embedding)
         if chunk_norm > 0:
             chunk_embedding = chunk_embedding / chunk_norm
@@ -231,93 +234,87 @@ class EvidenceGuardrail:
         # Pass 1: Automatic Spec Review
         for req_name in critical_fields:
             self._attempt_resolve(req_name, requirements, session_id, task, research_agent, attempt=1)
-                
-        def is_substantive_algorithmic_context_present() -> bool:
-            return (requirements.get("core_method_description").state == EvidenceState.SUPPORTED or 
-                    requirements.get("core_equations_or_formal_rules").state == EvidenceState.SUPPORTED)
 
-        if method_type == "DETERMINISTIC":
-            if is_substantive_algorithmic_context_present():
-                for req in critical_fields:
-                    if requirements[req].state != EvidenceState.SUPPORTED:
-                        requirements[req] = Requirement(
-                            name=req,
-                            state=EvidenceState.NOT_APPLICABLE_TO_PARADIGM,
-                            reason="Not required due to presence of other substantive algorithmic context."
+        def core_method_supported() -> bool:
+            return requirements.get("core_method_description").state == EvidenceState.SUPPORTED
+
+        def core_equations_supported() -> bool:
+            return requirements.get("core_equations_or_formal_rules").state == EvidenceState.SUPPORTED
+
+        def check_pass(attempt: int) -> GuardrailResult | None:
+            """
+            Unified pass condition for both paradigms, so neither is unfairly
+            stricter or more lenient than the other by accident:
+
+            - DETERMINISTIC: passes if EITHER core_method_description OR
+              core_equations_or_formal_rules is SUPPORTED. A deterministic/
+              symbolic algorithm is often fully specified by just one of these
+              (e.g. a described procedure, with no separate formal equation).
+
+            - TRAINABLE: passes if BOTH core_method_description AND
+              core_equations_or_formal_rules are SUPPORTED. This is
+              intentionally a stricter bar than DETERMINISTIC, since a
+              trainable model claims to have both an architecture and a
+              formal objective/computation, but it no longer additionally
+              demands key_parameters / training_or_optimization_procedure /
+              dataset_or_example_input be independently found — those are
+              frequently described in prose that doesn't hit keyword regexes
+              even when the paper is fully reproducible.
+            """
+            if method_type == "DETERMINISTIC":
+                passes = core_method_supported() or core_equations_supported()
+                paradigm = AIParadigm.CLASSICAL_ML
+            else:
+                passes = core_method_supported() and core_equations_supported()
+                paradigm = AIParadigm.DEEP_LEARNING
+
+            if not passes:
+                return None
+
+            for req in critical_fields:
+                if requirements[req].state != EvidenceState.SUPPORTED:
+                    requirements[req] = Requirement(
+                        name=req,
+                        state=EvidenceState.NOT_APPLICABLE_TO_PARADIGM,
+                        reason=(
+                            "Not required: core method and/or formal rules "
+                            "already substantively established for this paradigm."
                         )
-                return GuardrailResult(
-                    terminal_state=GuardrailTerminalState.PASS,
-                    attempt_count=1,
-                    requirements=requirements,
-                    session_id=session_id,
-                    code_generation_allowed=True,
-                    task_description=task,
-                    paper_relevance=PaperRelevance.SUPPORTED,
-                    implementation_support=ImplementationSupport.SUPPORTED,
-                    detected_paradigm=AIParadigm.CLASSICAL_ML
-                )
-        else:
-            all_critical_supported = all(requirements[req].state == EvidenceState.SUPPORTED for req in critical_fields)
-            if all_critical_supported:
-                return GuardrailResult(
-                    terminal_state=GuardrailTerminalState.PASS,
-                    attempt_count=1,
-                    requirements=requirements,
-                    session_id=session_id,
-                    code_generation_allowed=True,
-                    task_description=task,
-                    paper_relevance=PaperRelevance.SUPPORTED,
-                    implementation_support=ImplementationSupport.SUPPORTED,
-                    detected_paradigm=AIParadigm.DEEP_LEARNING
-                )
-            
+                    )
+
+            return GuardrailResult(
+                terminal_state=GuardrailTerminalState.PASS,
+                attempt_count=attempt,
+                requirements=requirements,
+                session_id=session_id,
+                code_generation_allowed=True,
+                task_description=task,
+                paper_relevance=PaperRelevance.SUPPORTED,
+                implementation_support=ImplementationSupport.SUPPORTED,
+                detected_paradigm=paradigm
+            )
+
+        result = check_pass(attempt=1)
+        if result is not None:
+            return result
+
         attempt = 2
         while attempt <= self.max_attempts:
             missing_core_fields = [f for f in critical_fields if requirements[f].state != EvidenceState.SUPPORTED]
             for req_name in missing_core_fields:
                 self._attempt_resolve(req_name, requirements, session_id, task, research_agent, attempt=attempt)
-                
-            if method_type == "DETERMINISTIC":
-                if is_substantive_algorithmic_context_present():
-                    for req in critical_fields:
-                        if requirements[req].state != EvidenceState.SUPPORTED:
-                            requirements[req] = Requirement(
-                                name=req,
-                                state=EvidenceState.NOT_APPLICABLE_TO_PARADIGM,
-                                reason="Not required due to presence of other substantive algorithmic context."
-                            )
-                    return GuardrailResult(
-                        terminal_state=GuardrailTerminalState.PASS,
-                        attempt_count=attempt,
-                        requirements=requirements,
-                        session_id=session_id,
-                        code_generation_allowed=True,
-                        task_description=task,
-                        paper_relevance=PaperRelevance.SUPPORTED,
-                        implementation_support=ImplementationSupport.SUPPORTED,
-                        detected_paradigm=AIParadigm.CLASSICAL_ML
-                    )
-            else:
-                all_critical_supported = all(requirements[req].state == EvidenceState.SUPPORTED for req in critical_fields)
-                if all_critical_supported:
-                    return GuardrailResult(
-                        terminal_state=GuardrailTerminalState.PASS,
-                        attempt_count=attempt,
-                        requirements=requirements,
-                        session_id=session_id,
-                        code_generation_allowed=True,
-                        task_description=task,
-                        paper_relevance=PaperRelevance.SUPPORTED,
-                        implementation_support=ImplementationSupport.SUPPORTED,
-                        detected_paradigm=AIParadigm.DEEP_LEARNING
-                    )
+
+            result = check_pass(attempt=attempt)
+            if result is not None:
+                return result
+
             attempt += 1
 
         return GuardrailResult(
             terminal_state=GuardrailTerminalState.UNRESOLVED,
             attempt_count=self.max_attempts,
             requirements=requirements,
-            reason="Could not retrieve sufficient evidence for all critical required fields after maximum attempts.",
+            reason="Could not retrieve sufficient evidence for the core method description and/or formal rules after maximum attempts.",
             session_id=session_id,
             code_generation_allowed=False,
             task_description=task,

@@ -12,4 +12,5 @@ class ImplementationContext:
     requirements: dict[str, Requirement] = field(default_factory=dict)
     code_gen_prompt: str | None = None
     generated_code: str | None = None
+    generated_files: dict[str, str] = field(default_factory=dict)
     sandbox_passed: bool = False

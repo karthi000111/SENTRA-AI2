@@ -69,3 +69,22 @@ class ResearchWorkspace:
             domain_guardrail=self._domain_guardrail,
             evidence_guardrail=self._evidence_guardrail
         )
+
+    def implement_paper(
+        self,
+        session_id: str,
+        guardrail_result: GuardrailResult,
+    ) -> tuple[ImplementationContext, GuardrailResult, "CodeGenResult"]:
+        """Generate code from a passing guardrail result (calls real LLM).
+
+        Should only be called after a PASS guardrail result.
+        """
+        import importlib
+        import app.orchestration.workflow as wf
+        if not hasattr(wf, "run_code_generation"):
+            importlib.reload(wf)
+        return wf.run_code_generation(
+            session_id=session_id,
+            guardrail_result=guardrail_result,
+        )
+

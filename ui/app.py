@@ -5,6 +5,18 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# Load .env so HF_TOKEN persists across restarts
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+except ImportError:
+    pass
+
+# Purge stale app modules from sys.modules to prevent long-running Streamlit processes from caching old code in RAM
+for mod_name in list(sys.modules.keys()):
+    if mod_name.startswith("app.") or mod_name == "app":
+        del sys.modules[mod_name]
+
 import streamlit as st
 
 from app.services import ResearchWorkspace, WorkspaceStatus
@@ -36,7 +48,15 @@ def format_paradigm(raw_paradigm: str) -> str:
 @st.cache_resource
 def workspace() -> ResearchWorkspace:
     """One application service; backend session IDs remain the isolation boundary."""
-    return ResearchWorkspace()
+    from app.services.research_workspace import ResearchWorkspace
+    inst = ResearchWorkspace()
+    if not hasattr(inst, "implement_paper"):
+        # Force reload module if stale class definition was loaded
+        import importlib
+        import app.services.research_workspace as rw_mod
+        importlib.reload(rw_mod)
+        inst = rw_mod.ResearchWorkspace()
+    return inst
 
 
 def reset_ui_state() -> None:
@@ -130,7 +150,7 @@ def main() -> None:
             st.markdown('<div class="card"><div class="label">YOUR RESEARCH SPACE IS EMPTY</div><h3>Upload one or more research papers to create your temporary knowledge base.</h3><p class="muted">Documents remain isolated within this research session.</p></div>', unsafe_allow_html=True)
             return
             
-        qa_tab, spec_tab = st.tabs(["Q&A", "Implementation Guardrail"])
+        qa_tab, spec_tab, code_tab = st.tabs(["Q&A", "Implementation Guardrail", "🔬 Code Implementation"])
         
         with qa_tab:
             query = st.text_area("Ask Research Agent", placeholder="Ask something about your uploaded research papers...", height=105)
@@ -190,19 +210,157 @@ def main() -> None:
                         else:
                             st.warning(f"**{name.replace('_', ' ').title()}** - {req.state.value}")
                             
-                        if req.evidence and req.evidence.source_quote:
-                            st.markdown(f"> Evidence found in {req.evidence.source_file}, page {req.evidence.page}: {req.evidence.source_quote}")
+                        if req.evidence and req.evidence.evidence_text:
+                            st.markdown(f"> Evidence found in {req.evidence.source}, page {req.evidence.page}: {req.evidence.evidence_text}")
                         elif req.value:
                             st.markdown(f"> {req.value}")
                         if req.reason and req.state.value != "SUPPORTED":
                             st.markdown(f"*Reason:* {req.reason}")
                             
-                if context and context.generated_code:
-                    st.markdown("### Generated Code")
-                    st.code(context.generated_code, language="python")
-
-                            
                 st.markdown("---")
+
+        # -----------------------------------------------------------------
+        # Code Implementation tab
+        # -----------------------------------------------------------------
+        with code_tab:
+            st.markdown("### 🔬 Code Implementation")
+            st.markdown(
+                "Generate a runnable Python implementation of the paper, "
+                "grounded in the verified specifications extracted by the guardrail."
+            )
+
+            gr = st.session_state.get("last_guardrail")
+
+            if not gr:
+                st.markdown(
+                    '<div class="card">'
+                    '<div class="label">NO GUARDRAIL RESULT YET</div>'
+                    '<h3>Run the Implementation Guardrail first.</h3>'
+                    '<p class="muted">Switch to the "Implementation Guardrail" tab '
+                    'and click <strong>Run Guardrail</strong> to validate the paper.</p>'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+            elif not gr.code_generation_allowed:
+                st.warning(
+                    "⛔ The guardrail did **not** pass — code generation is blocked.  \n"
+                    "Reason: " + (gr.reason or "insufficient evidence")
+                )
+            else:
+                # --- Guardrail passed → show Implement Paper button --------
+                st.success(
+                    f"✅ Guardrail **PASSED** "
+                    f"({gr.completeness_score:.0%} spec coverage, "
+                    f"paradigm: {format_paradigm(gr.detected_paradigm or 'unknown')}).  \n"
+                    "Ready to generate a paper implementation."
+                )
+
+                if st.button(
+                    "🚀 Implement Paper",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    with st.spinner("Implementing your paper..."):
+                        try:
+                            if not hasattr(service, "implement_paper"):
+                                st.cache_resource.clear()
+                                service = workspace()
+                            ctx, updated_gr, gen_result = service.implement_paper(
+                                status.session_id, gr
+                            )
+                            st.session_state.last_guardrail = updated_gr
+                            st.session_state.last_context = ctx
+                            st.session_state.last_gen_result = gen_result
+                        except Exception as exc:
+                            st.error(f"Code generation failed: {exc}")
+
+                # --- Display previous / just-generated result ---------------
+                gen_result = st.session_state.get("last_gen_result")
+                if gen_result:
+                    if gen_result.success:
+                        st.markdown("---")
+                        if getattr(gen_result, "fully_grounded", True):
+                            st.markdown("#### ✅ Implementation Generated (Fully Grounded)")
+                        else:
+                            st.markdown(f"#### ⚠️ Implementation Generated ({len(gen_result.missing_specs)} Specs Uncited)")
+
+                        # Missing Specs warning (if any)
+                        missing = getattr(gen_result, "missing_specs", [])
+                        if missing:
+                            with st.expander(f"⚠️ Uncited Grounded Specs ({len(missing)})", expanded=True):
+                                st.caption("The following grounded specifications were extracted from the paper but not explicitly tagged with `# SPEC:` in the generated code:")
+                                for m_spec in missing:
+                                    st.markdown(f"- `{m_spec}`")
+
+                        # Spec citations
+                        if gen_result.spec_citations_found:
+                            with st.expander(f"📎 Spec Citations ({len(gen_result.spec_citations_found)})", expanded=False):
+                                for cite in gen_result.spec_citations_found:
+                                    st.markdown(f"- `{cite}`")
+
+                        # Disclosed Deferrals (if any)
+                        deferred_items = getattr(gen_result, "deferred_specs", [])
+                        if deferred_items:
+                            with st.expander(f"📌 Disclosed Deferrals ({len(deferred_items)})", expanded=True):
+                                st.caption("The generator explicitly disclosed the following deferred items / out-of-scope components:")
+                                for d_item in deferred_items:
+                                    st.markdown(f"- `{d_item}`")
+
+                        # Assumptions
+                        if gen_result.assumptions_found:
+                            with st.expander(f"⚠️ Assumptions Made ({len(gen_result.assumptions_found)})", expanded=True):
+                                for assumption in gen_result.assumptions_found:
+                                    st.markdown(f"- {assumption}")
+
+                        # The code
+                        st.markdown("#### Generated Code")
+                        files = getattr(gen_result, "files", [])
+                        if files:
+                            file_tabs = st.tabs([f"📄 {f.filename}" for f in files])
+                            for tab, f in zip(file_tabs, files):
+                                with tab:
+                                    st.code(f.code, language="python")
+                                    st.download_button(
+                                        label=f"💾 Download {f.filename}",
+                                        data=f.code,
+                                        file_name=f.filename,
+                                        mime="text/x-python",
+                                        key=f"download_{f.filename}",
+                                    )
+                            
+                            # ZIP download for whole project
+                            import io
+                            import zipfile
+                            zip_buffer = io.BytesIO()
+                            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                                for f in files:
+                                    zf.writestr(f.filename, f.code)
+                            zip_buffer.seek(0)
+                            
+                            st.markdown("---")
+                            st.download_button(
+                                label="📦 Download Complete Project (.zip)",
+                                data=zip_buffer.getvalue(),
+                                file_name="paper_implementation.zip",
+                                mime="application/zip",
+                                use_container_width=True,
+                            )
+                        else:
+                            st.code(gen_result.generated_code, language="python")
+                            st.download_button(
+                                label="💾 Download as .py",
+                                data=gen_result.generated_code,
+                                file_name="paper_implementation.py",
+                                mime="text/x-python",
+                                use_container_width=True,
+                            )
+                    else:
+                        st.markdown("---")
+                        st.error(f"Code generation failed: {gen_result.error_reason}")
+                        if gen_result.generated_code:
+                            with st.expander("Partial / failed output"):
+                                st.code(gen_result.generated_code, language="python")
 
 if __name__ == "__main__":
     main()
+

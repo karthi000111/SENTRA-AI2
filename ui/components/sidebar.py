@@ -27,7 +27,25 @@ def render_sidebar(st: object, status: WorkspaceStatus | None) -> tuple[bool, bo
         st.markdown("---")
         st.markdown("#### PIPELINE")
         st.caption("✓ Research")
-        st.caption("○ Specification · future")
-        st.caption("○ Verification · future")
-        st.caption("○ Code Generation · future")
+        st.caption("✓ Evidence Guardrail")
+        st.caption("✓ Code Generation")
+
+        # --- HF Token input ---
+        st.markdown("---")
+        st.markdown("#### 🔑 HUGGING FACE")
+        hf_token = st.text_input(
+            "HF Token",
+            type="password",
+            value=st.session_state.get("hf_token", ""),
+            placeholder="hf_...",
+            help="Paste your [Hugging Face token](https://huggingface.co/settings/tokens) to enable code generation.",
+        )
+        if hf_token:
+            st.session_state.hf_token = hf_token
+            import os
+            os.environ["HF_TOKEN"] = hf_token
+            st.caption("✅ Token set")
+        else:
+            st.caption("Paste token to enable Implement Paper")
+
         return new_session, delete_session

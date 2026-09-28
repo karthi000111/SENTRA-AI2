@@ -5,5 +5,10 @@ sentence-transformers
 faiss-cpu
 streamlit
 
+# LLM backend (Hugging Face Inference API)
+huggingface-hub
+python-dotenv
+
 # Test runner
 pytest
+pydantic
