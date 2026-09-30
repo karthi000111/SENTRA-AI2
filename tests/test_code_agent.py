@@ -140,3 +140,76 @@ def test_generate_implementation_multifile_success():
     # Verify spec coverage was computed
     assert isinstance(result.missing_specs, list)
     assert isinstance(result.fully_grounded, bool)
+
+
+def test_auto_fix_syntax_missing_indented_block():
+    """Verify auto_fix_syntax inserts pass for missing indented blocks after if/def/class/for."""
+    broken_code = (
+        "import torch\n"
+        "def train_epoch():\n"
+        "    if epoch % 5 == 0:\n"
+        "    print('Done')\n"
+    )
+    fixed = CodeAgent.auto_fix_syntax(broken_code)
+    # Should compile cleanly without SyntaxError
+    compile(fixed, "<test>", "exec")
+    assert "pass" in fixed
+
+
+def test_auto_fix_syntax_eof_dangling_colon():
+    """Verify auto_fix_syntax handles dangling colon at end of file."""
+    broken_code = "if __name__ == '__main__':"
+    fixed = CodeAgent.auto_fix_syntax(broken_code)
+    compile(fixed, "<test>", "exec")
+    assert "pass" in fixed
+
+
+def test_generate_implementation_multifile_recovers_from_syntax_error():
+    """Verify multifile generator automatically fixes syntax error in train.py."""
+    mock_responses = {
+        "attention.py": "class MHA:\n    pass\n",
+        "layers.py": "class Layer:\n    pass\n",
+        "blocks.py": "class Block:\n    pass\n",
+        "model.py": "class Model:\n    pass\n",
+        # train.py contains missing indented block after 'if' statement
+        "train.py": "def train():\n    if True:\n    return\n",
+        "main.py": "if __name__ == '__main__':\n    print('OK')\n",
+    }
+
+    def mock_llm_fn(prompt: str) -> str:
+        for fname, resp in mock_responses.items():
+            if f"`{fname}`" in prompt:
+                return f"```python\n{resp}\n```"
+        return "```python\n# fallback\n```"
+
+    agent = CodeAgent(llm_fn=mock_llm_fn)
+    gr = GuardrailResult(
+        terminal_state=GuardrailTerminalState.PASS,
+        attempt_count=1,
+        code_generation_allowed=True,
+        detected_paradigm=AIParadigm.DEEP_LEARNING,
+        task_description="Test recovery",
+    )
+
+    result = agent.generate_implementation_multifile(gr)
+    assert result.success is True
+    file_map = {f.filename: f.code for f in result.files}
+    assert "train.py" in file_map
+    # Verify train.py now compiles cleanly
+    compile(file_map["train.py"], "<train.py>", "exec")
+
+
+def test_heal_cross_file_imports_missing_symbol():
+    """Verify heal_cross_file_imports injects a fallback stub into layers.py when model.py imports a missing symbol."""
+    from app.agents.code_agent import GeneratedFile
+
+    files = [
+        GeneratedFile(filename="layers.py", code="import torch\nimport torch.nn as nn\nclass PositionalEncoding(nn.Module):\n    pass\n"),
+        GeneratedFile(filename="model.py", code="import torch\nimport torch.nn as nn\nfrom layers import TokenEmbedding, PositionalEncoding\nclass TransformerModel(nn.Module):\n    pass\n"),
+    ]
+
+    healed = CodeAgent.heal_cross_file_imports(files)
+    layers_code = next(f.code for f in healed if f.filename == "layers.py")
+    assert "class TokenEmbedding(nn.Module):" in layers_code
+
+

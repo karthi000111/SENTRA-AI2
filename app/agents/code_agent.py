@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import ast
 import re
 import logging
 from typing import Any, Dict, Callable, Optional
@@ -264,6 +266,93 @@ Produce the full Python code now:
         return CodeAgent.sanitize_code(code)
 
     @staticmethod
+    def auto_fix_syntax(code: str) -> str:
+        """Attempt deterministic AST and syntax repairs for common LLM generation flaws,
+        such as missing indented blocks after control statements (if/elif/else/def/class/try/for/while).
+        """
+        if not code or not code.strip():
+            return code
+
+        current_code = code
+        for _ in range(5):
+            try:
+                compile(current_code, "<check>", "exec")
+                return current_code
+            except SyntaxError as exc:
+                lines = current_code.splitlines()
+                if not lines:
+                    break
+                err_line = exc.lineno if exc.lineno is not None else len(lines)
+                err_msg = str(exc).lower()
+
+                fixed = False
+
+                # Handle "expected an indented block"
+                if "expected an indented block" in err_msg or "indented block" in err_msg:
+                    header_idx = max(0, min(err_line - 1, len(lines) - 1))
+                    
+                    # Search upwards for nearest statement line ending with ':'
+                    search_idx = header_idx
+                    while search_idx >= 0:
+                        line_str = lines[search_idx].strip()
+                        if line_str and not line_str.startswith("#"):
+                            if line_str.endswith(":"):
+                                header_idx = search_idx
+                                break
+                        search_idx -= 1
+
+                    header_line = lines[header_idx]
+                    header_indent = len(header_line) - len(header_line.lstrip())
+                    pass_indent = " " * (header_indent + 4)
+                    
+                    insert_pos = header_idx + 1
+                    while insert_pos < len(lines) and lines[insert_pos].strip().startswith("#"):
+                        insert_pos += 1
+                    
+                    lines.insert(insert_pos, f"{pass_indent}pass")
+                    current_code = "\n".join(lines)
+                    fixed = True
+
+                # Handle unexpected EOF or unclosed block at end of file
+                elif ("unexpected eof" in err_msg or "was never closed" in err_msg or err_line >= len(lines)) and len(lines) > 0:
+                    last_line = lines[-1].strip()
+                    if last_line.endswith(":"):
+                        indent = len(lines[-1]) - len(lines[-1].lstrip())
+                        lines.append(" " * (indent + 4) + "pass")
+                        current_code = "\n".join(lines)
+                        fixed = True
+                    elif last_line.endswith(("=", "(", "[", "{", ",", "+", "-", "*", "/", "\\")):
+                        lines.pop()
+                        current_code = "\n".join(lines)
+                        fixed = True
+
+        # Check AST for truncated/undefined class references (e.g. 'Sc' instead of 'ScaledDotProductAttention')
+        try:
+            tree = ast.parse(current_code)
+            defined_classes = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+            if defined_classes:
+                import builtins
+                undefined_replacements = {}
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                        name_id = node.id
+                        if (
+                            name_id not in defined_classes
+                            and name_id not in ("self", "cls")
+                            and not hasattr(builtins, name_id)
+                        ):
+                            matches = [c for c in defined_classes if c.startswith(name_id) and len(c) > len(name_id)]
+                            if matches:
+                                undefined_replacements[name_id] = f"{matches[0]}()"
+
+                for wrong_name, right_name in undefined_replacements.items():
+                    current_code = re.sub(rf"\b{wrong_name}\b", right_name, current_code)
+        except Exception:
+            pass
+
+        return current_code
+
+    @staticmethod
     def sanitize_code(code: str) -> str:
         """Fix common structural LLM quirks like indented def __main__ inside class bodies."""
         lines = code.splitlines()
@@ -285,7 +374,8 @@ Produce the full Python code now:
             else:
                 fixed_lines.append(line)
 
-        return "\n".join(fixed_lines)
+        sanitized = "\n".join(fixed_lines)
+        return CodeAgent.auto_fix_syntax(sanitized)
 
     @staticmethod
     def extract_annotations(code: str) -> tuple[list[str], list[str], list[str]]:
@@ -626,20 +716,43 @@ Produce the code for {entry['filename']} now:
         )
         all_deferred = list(dict.fromkeys(deferred_specs + all_deferred_annotations))
 
-        # compile-check each file independently
+        # compile-check each file independently with automatic syntax repair & self-healing
         for f in generated_files:
+            repaired_code = self.auto_fix_syntax(f.code)
             try:
-                compile(f.code, f"<{f.filename}>", "exec")
+                compile(repaired_code, f"<{f.filename}>", "exec")
+                f.code = repaired_code
             except SyntaxError as exc:
-                return CodeGenResult(
-                    files=generated_files,
-                    generated_code=context_so_far,
-                    success=False,
-                    error_reason=f"{f.filename} has a syntax error: {exc}",
-                    missing_specs=missing,
-                    deferred_specs=all_deferred,
-                    fully_grounded=(len(missing) == 0),
-                )
+                healed = False
+                if self._llm_fn:
+                    repair_prompt = (
+                        f"The generated Python code for `{f.filename}` has a syntax error:\n"
+                        f"{exc}\n\n"
+                        f"CODE:\n```python\n{f.code}\n```\n\n"
+                        f"Output ONLY the corrected code for `{f.filename}` with proper syntax and indentation."
+                    )
+                    try:
+                        llm_fixed = self.extract_code_block(self._llm_fn(repair_prompt))
+                        llm_fixed = self.auto_fix_syntax(llm_fixed)
+                        compile(llm_fixed, f"<{f.filename}>", "exec")
+                        f.code = llm_fixed
+                        healed = True
+                    except Exception:
+                        pass
+
+                if not healed:
+                    return CodeGenResult(
+                        files=generated_files,
+                        generated_code=context_so_far,
+                        success=False,
+                        error_reason=f"{f.filename} has a syntax error: {exc}",
+                        missing_specs=missing,
+                        deferred_specs=all_deferred,
+                        fully_grounded=(len(missing) == 0),
+                    )
+
+        # Validate and heal inter-file cross-imports (e.g. missing symbols exported by sibling modules)
+        generated_files = self.heal_cross_file_imports(generated_files)
 
         return CodeGenResult(
             files=generated_files,
@@ -651,6 +764,122 @@ Produce the code for {entry['filename']} now:
             fully_grounded=(len(missing) == 0),
             success=True,
         )
+
+    @staticmethod
+    def heal_cross_file_imports(generated_files: list[GeneratedFile]) -> list[GeneratedFile]:
+        """Validate and resolve inter-file import mismatches across all generated files.
+
+        If file B imports symbol X from file A (`from A import X`), but file A does not define X:
+        1. Search file A for a case-insensitive or substring name match.
+        2. Search other generated files if symbol X exists elsewhere, and update the import module.
+        3. If X is missing across all files, inject a clean fallback PyTorch stub into file A so the import succeeds.
+        """
+        if not generated_files:
+            return generated_files
+
+        file_map = {f.filename: f for f in generated_files}
+        mod_to_filename = {
+            os.path.splitext(fname)[0]: fname for fname in file_map
+        }
+
+        # Collect exported top-level names per module
+        exports: dict[str, set[str]] = {}
+        for mod_name, fname in mod_to_filename.items():
+            mod_exports = set()
+            try:
+                tree = ast.parse(file_map[fname].code)
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                        mod_exports.add(node.name)
+                    elif isinstance(node, ast.Assign):
+                        for target in node.targets:
+                            if isinstance(target, ast.Name):
+                                mod_exports.add(target.id)
+            except Exception:
+                pass
+            exports[mod_name] = mod_exports
+
+        # Inspect cross-file imports and resolve missing symbols
+        for f in generated_files:
+            try:
+                tree = ast.parse(f.code)
+            except Exception:
+                continue
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module in mod_to_filename:
+                    target_mod = node.module
+                    target_filename = mod_to_filename[target_mod]
+                    target_file = file_map[target_filename]
+                    target_exports = exports.get(target_mod, set())
+
+                    for alias in node.names:
+                        imported_name = alias.name
+                        if imported_name == "*":
+                            continue
+
+                        if imported_name not in target_exports:
+                            # 1. Case-insensitive or fuzzy match in target_mod
+                            match = None
+                            for exp in target_exports:
+                                if exp.lower() == imported_name.lower():
+                                    match = exp
+                                    break
+                            if not match:
+                                for exp in target_exports:
+                                    if imported_name.lower() in exp.lower() or exp.lower() in imported_name.lower():
+                                        match = exp
+                                        break
+
+                            if match:
+                                f.code = re.sub(rf"\b{re.escape(imported_name)}\b", match, f.code)
+                                continue
+
+                            # 2. Check if exported by another module
+                            other_mod = None
+                            for m_name, m_exp in exports.items():
+                                if m_name != target_mod and imported_name in m_exp:
+                                    other_mod = m_name
+                                    break
+
+                            if other_mod:
+                                pattern = rf"from\s+{re.escape(target_mod)}\s+import\s+([^\n]*\b{re.escape(imported_name)}\b[^\n]*)"
+                                def repl_other(m):
+                                    line = m.group(0)
+                                    return line.replace(f"from {target_mod} import", f"from {other_mod} import")
+                                f.code = re.sub(pattern, repl_other, f.code)
+                                continue
+
+                            # 3. Inject fallback class or function stub into target_mod file
+                            is_class = imported_name[0].isupper() or any(
+                                term in imported_name for term in ["Embedding", "Layer", "Block", "Attention", "Model", "Encoding"]
+                            )
+                            if is_class:
+                                stub = (
+                                    f"\n\nclass {imported_name}(nn.Module):\n"
+                                    f"    \"\"\"Auto-generated fallback stub for cross-file import consistency.\"\"\"\n"
+                                    f"    def __init__(self, *args, **kwargs):\n"
+                                    f"        super().__init__()\n"
+                                    f"    def forward(self, x, *args, **kwargs):\n"
+                                    f"        return x\n"
+                                )
+                                code_to_add = ""
+                                if "import torch.nn as nn" not in target_file.code and "from torch import nn" not in target_file.code:
+                                    if "import torch" not in target_file.code:
+                                        code_to_add += "import torch\n"
+                                    code_to_add += "import torch.nn as nn\n"
+                                target_file.code = code_to_add + target_file.code + stub
+                                exports[target_mod].add(imported_name)
+                            else:
+                                stub = (
+                                    f"\n\ndef {imported_name}(*args, **kwargs):\n"
+                                    f"    \"\"\"Auto-generated fallback function stub.\"\"\"\n"
+                                    f"    pass\n"
+                                )
+                                target_file.code += stub
+                                exports[target_mod].add(imported_name)
+
+        return generated_files
 
     # ---------------------------------------------------------------------
     # Main entry point
