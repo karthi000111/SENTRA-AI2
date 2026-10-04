@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.agents import ResearchAgent, ResearchResult
+from app.agents.llm_backend import call_hf_inference
 from app.guardrails.models import GuardrailResult
 from app.guardrails.domain_guardrail import DomainGuardrail
 from app.guardrails.evidence_guardrail import EvidenceGuardrail
@@ -24,7 +25,7 @@ class ResearchWorkspace:
 
     def __init__(self, manager: SessionRAGManager | None = None) -> None:
         self._manager = manager or SessionRAGManager()
-        self._agent = ResearchAgent(self._manager)
+        self._agent = ResearchAgent(self._manager, llm_callable=call_hf_inference)
         self._domain_guardrail = DomainGuardrail(self._agent)
         self._evidence_guardrail = EvidenceGuardrail(max_attempts=3)
 

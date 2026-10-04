@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 
 from app.agents import ResearchAgent
+from app.agents.llm_backend import call_hf_inference
 from app.rag import SessionRAGManager
 
 
@@ -12,6 +13,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the SENTRA AI Research Agent against uploaded PDFs.")
     parser.add_argument("--demo", nargs="+", metavar="PDF", help="One or more local PDF files to ingest temporarily.")
     parser.add_argument("--question", help="Research question to ask of the supplied PDFs.")
+    parser.add_argument("--no-llm", action="store_true", help="Disable LLM and use extractive-only answers.")
     args = parser.parse_args()
     if not args.demo:
         print("Sentra AI project initialized. Use --demo paper.pdf --question 'Your question'.")
@@ -28,7 +30,10 @@ def main() -> None:
     session_id = rag.create_session()
     try:
         ingestion = rag.add_documents(session_id, files)
-        result = ResearchAgent(rag).run(session_id=session_id, query=args.question)
+        llm_fn = None if args.no_llm else call_hf_inference
+        result = ResearchAgent(rag, llm_callable=llm_fn).run(
+            session_id=session_id, query=args.question,
+        )
         print("=" * 50)
         print("SENTRA AI - RESEARCH AGENT DEMO")
         print("=" * 50)
@@ -38,6 +43,9 @@ def main() -> None:
         print(f"Question: {args.question}\n")
         print("RESEARCH AGENT")
         print(result.answer)
+        print(f"\nFAITHFULNESS SCORE: {result.faithfulness_score:.1%}")
+        print(f"  → {result.faithfulness_score:.1%} of the answer is grounded in evidence")
+        print(f"  → {1 - result.faithfulness_score:.1%} potential hallucination")
         print("\nEVIDENCE")
         for item in result.evidence:
             print(f"Source: {item['source']} | Page: {item['page']} | Score: {item['score']:.3f}")

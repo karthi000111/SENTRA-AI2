@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from app.agents.research_agent import ResearchAgent
+from app.agents.llm_backend import call_hf_inference
 from app.guardrails.domain_guardrail import DomainGuardrail
 from app.guardrails.evidence_guardrail import EvidenceGuardrail
 from app.guardrails.models import GuardrailResult, GuardrailTerminalState
@@ -35,7 +36,7 @@ def run_research_to_spec_workflow(
     """
     if research_agent is None:
         from app.rag.session_manager import SessionRAGManager
-        research_agent = ResearchAgent(SessionRAGManager())
+        research_agent = ResearchAgent(SessionRAGManager(), llm_callable=call_hf_inference)
 
     if evidence_guardrail is None:
         evidence_guardrail = EvidenceGuardrail(max_attempts=3)
